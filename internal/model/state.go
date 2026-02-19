@@ -30,8 +30,10 @@ type AppState struct {
 	Deployments []Deployment
 	LastErr     error
 	Namespace   string // active namespace filter ("" = all)
+	Context     string // active kubernetes context name
 	SearchMode  bool   // true while the user is typing a search query
 	SearchQuery string // live filter applied to the active view
+	HelpMode    bool   // true while the help overlay is shown
 }
 
 // ApplyUpdate merges an incoming watcher update into state.

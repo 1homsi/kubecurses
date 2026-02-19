@@ -1,22 +1,24 @@
 # kubecurses
 
-A terminal dashboard for Kubernetes. See what's running on each node — without leaving your terminal.
+**Node-first Kubernetes terminal viewer focused on spotting scheduling issues and failing workloads instantly.**
+
+Not a kubectl replacement — a fast, opinionated dashboard for when you need to know *which node a pod landed on, why it's failing, and how long it's been that way* without context-switching to a browser.
 
 ```
-● worker-1          Ready      v1.29.0
-    nginx-web        default    Running    2/2    0    3d
-    coredns          kube-system Running   2/2    0    15d
-    metrics-server   kube-system Running   1/1    0    15d
+1:Overview  2:Pods  3:Deployments  4:Namespaces      ctx:prod-33 | 3 nodes | 47 pods
 
-● worker-2          Ready      v1.29.0
-    api-server       default    Running    3/3    0    1d
-    redis            default    Pending    0/1    5    3h
-    broken-job       default    Failed     0/1    12   45m
+  NAME                            NAMESPACE         STATUS     READY  REST  AGE
+● ip-172-16-217-131.eu-west-1…   v1.33.5-eks-11…   Ready               8d
+  ✔ nginx-web                     default           Running    2/2    0     3d
+  ✔ coredns                       kube-system       Running    2/2    0     15d
+  ↻ redis                         default           Pending    0/1    5     3h
+● ip-172-16-219-253.eu-west-1…   v1.33.5-eks-11…   NotReady            5h
+  ✖ broken-job                    default           CrashLoop  0/1    12    45m
 ```
 
 ## Install
 
-Download the latest binary for your platform from [Releases](https://github.com/1homsi/kubecurses/releases):
+Download the latest binary from [Releases](https://github.com/1homsi/kubecurses/releases):
 
 ```bash
 # macOS (Apple Silicon)
@@ -55,6 +57,9 @@ kubecurses --context production --namespace kube-system
 
 # Faster polling
 kubecurses --interval 5s
+
+# Version info
+kubecurses --version
 ```
 
 ## Keyboard shortcuts
@@ -72,22 +77,25 @@ kubecurses --interval 5s
 | `/` | Search — filter rows live |
 | `Esc` | Clear search |
 | `r` | Manual refresh |
+| `?` | Help overlay |
 | `q` / `Ctrl+C` | Quit |
 
 ## Views
 
 ### Overview (default)
-Nodes are shown as section headers. Each node lists the pods scheduled on it, coloured by status. Restart counts are highlighted amber (≥3) or red (≥10) so problem pods stand out immediately.
+Nodes are section headers sorted by health — **NotReady nodes surface first**, then by pod count. Each node lists the pods scheduled on it. Pod rows show a status icon (✔ ↻ ✖ ⚠ ⊘), name, namespace, status, ready count, restart count, and age. Restart counts are highlighted amber (≥3) or red (≥10).
+
+Detected statuses beyond plain `kubectl` phase: `CrashLoopBackOff`, `Terminating`, `OOMKilled`, `ImagePullBackOff`, and more.
 
 ### Pods
-Flat list of all pods across all nodes, sortable by navigation. Respects the `--namespace` flag and the active search filter.
+Flat list of all pods across all nodes. Respects the `--namespace` flag and the active search filter.
 
 ### Deployments / Namespaces
 Standard tabular views with ready/available counts and ages.
 
 ## Search
 
-Press `/` to open the search bar. Start typing — rows are filtered live across all views by pod name, namespace, or status. Press `Enter` to keep the filter active while you navigate, or `Esc` to clear it.
+Press `/` to open the search bar. Start typing — rows are filtered live by pod name, namespace, or status. Press `Enter` to keep the filter while you navigate, or `Esc` to clear it.
 
 ## Flags
 
@@ -104,6 +112,16 @@ Press `/` to open the search bar. Start typing — rows are filtered live across
 - **Go 1.22**
 - **[tcell/v2](https://github.com/gdamore/tcell)** — terminal rendering
 - **[client-go](https://github.com/kubernetes/client-go)** — Kubernetes API
+
+## Roadmap
+
+- [ ] Informer-based live updates (no polling)
+- [ ] Node resource usage — CPU/mem requests vs capacity via metrics-server
+- [ ] Logs view (`l` to stream pod logs)
+- [ ] Exec shell (`e` to open a shell in a container)
+- [ ] Workload grouping — pods grouped by Deployment/StatefulSet/DaemonSet
+- [ ] Persisted settings (`~/.config/kubecurses/config.yaml`)
+- [ ] Brew tap
 
 ## License
 

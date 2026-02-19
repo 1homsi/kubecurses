@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -36,11 +37,32 @@ func FetchPods(ctx context.Context, cs *kubernetes.Clientset, namespace string) 
 			Namespace: p.Namespace,
 			Name:      p.Name,
 			Ready:     fmt.Sprintf("%d/%d", ready, total),
-			Status:    string(p.Status.Phase),
+			Status:    podEffectiveStatus(p),
 			Restarts:  restarts,
 			Age:       age,
 			Node:      p.Spec.NodeName,
 		})
 	}
 	return pods, nil
+}
+
+// podEffectiveStatus returns a human-readable status string that reflects real pod
+// state beyond just Phase — detects Terminating, CrashLoopBackOff, OOMKilled, etc.
+func podEffectiveStatus(p corev1.Pod) string {
+	if p.DeletionTimestamp != nil {
+		return "Terminating"
+	}
+	for _, cs := range p.Status.ContainerStatuses {
+		if cs.State.Waiting != nil {
+			switch cs.State.Waiting.Reason {
+			case "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
+				"CreateContainerConfigError", "InvalidImageName":
+				return cs.State.Waiting.Reason
+			}
+		}
+		if cs.State.Terminated != nil && cs.State.Terminated.Reason == "OOMKilled" {
+			return "OOMKilled"
+		}
+	}
+	return string(p.Status.Phase)
 }

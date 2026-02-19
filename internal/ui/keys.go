@@ -26,6 +26,7 @@ const (
 	ActionSearchCommit // Enter — commit query and exit search mode
 	ActionSearchBack   // Backspace — delete last char in query
 	ActionSearchAppend // any printable rune while in search mode
+	ActionHelp         // '?' — toggle help overlay
 )
 
 // EventToAction converts a tcell event into a logical Action for normal mode.
@@ -76,6 +77,8 @@ func EventToAction(ev tcell.Event) Action {
 		return ActionRefresh
 	case '/':
 		return ActionSearchOpen
+	case '?':
+		return ActionHelp
 	case '1':
 		return ActionTab1
 	case '2':

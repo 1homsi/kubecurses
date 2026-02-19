@@ -7,7 +7,8 @@ import (
 )
 
 // DrawTabBar renders the tab bar across the top of the screen.
-func DrawTabBar(s *Screen, screenW int, active model.Tab) {
+// Right-aligns cluster/context info: ctx:NAME | N nodes | N pods
+func DrawTabBar(s *Screen, screenW int, active model.Tab, state *model.AppState) {
 	r := TabBarRect(screenW)
 	s.FillRect(r, ' ', StyleTabInactive)
 
@@ -20,5 +21,16 @@ func DrawTabBar(s *Screen, screenW int, active model.Tab) {
 		}
 		s.DrawText(x, r.Y, style, label)
 		x += len([]rune(label))
+	}
+
+	// Right-align cluster/context summary.
+	ctx := state.Context
+	if ctx == "" {
+		ctx = "—"
+	}
+	info := fmt.Sprintf("ctx:%s | %d nodes | %d pods ", ctx, len(state.Nodes), len(state.Pods))
+	infoX := screenW - len([]rune(info))
+	if infoX > x+2 {
+		s.DrawText(infoX, r.Y, StyleTabInactive, info)
 	}
 }

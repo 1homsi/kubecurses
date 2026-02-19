@@ -69,6 +69,7 @@ func New(cfg Config) (*App, error) {
 		nodeOverview: ov,
 		state: model.AppState{
 			Namespace: cfg.Namespace,
+			Context:   cfg.Context,
 		},
 		views: [4]views.View{
 			model.TabNodeOverview: ov,
@@ -132,9 +133,14 @@ func (a *App) pollEvent(ctx context.Context) <-chan tcell.Event {
 	return ch
 }
 
-// handleEvent dispatches to search mode or normal mode event handling.
+// handleEvent dispatches to help, search, or normal mode event handling.
 // Returns true if the application should quit.
 func (a *App) handleEvent(ev tcell.Event) bool {
+	// Any key dismisses the help overlay.
+	if a.state.HelpMode {
+		a.state.HelpMode = false
+		return false
+	}
 	if a.state.SearchMode {
 		return a.applySearchAction(ui.SearchEventToAction(ev), ev)
 	}
@@ -201,6 +207,8 @@ func (a *App) applyAction(action ui.Action) bool {
 		a.state.SearchQuery = ""
 	case ui.ActionSearchCancel:
 		a.state.SearchQuery = ""
+	case ui.ActionHelp:
+		a.state.HelpMode = true
 	}
 	return false
 }
@@ -246,9 +254,12 @@ func (a *App) activeLen() int {
 func (a *App) draw() {
 	w, h := a.screen.Size()
 	a.screen.Clear()
-	ui.DrawTabBar(a.screen, w, a.state.ActiveTab)
+	ui.DrawTabBar(a.screen, w, a.state.ActiveTab, &a.state)
 	contentRect := ui.ContentRect(w, h)
 	a.views[a.state.ActiveTab].Draw(a.screen, contentRect, &a.state)
 	ui.DrawStatusBar(a.screen, w, h, &a.state)
+	if a.state.HelpMode {
+		ui.DrawHelp(a.screen, w, h)
+	}
 	a.screen.Show()
 }

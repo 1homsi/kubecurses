@@ -2,6 +2,7 @@ package views
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -25,6 +26,7 @@ type NodeOverviewView struct {
 }
 
 // buildRows groups pods under their node, respecting the active namespace filter.
+// Nodes are sorted: NotReady first, then by pod count descending.
 func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRow {
 	byNode := make(map[string][]model.Pod, len(state.Nodes))
 	var unscheduled []model.Pod
@@ -43,8 +45,20 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 		}
 	}
 
-	rows := make([]ovRow, 0, len(state.Nodes)+len(state.Pods))
-	for _, n := range state.Nodes {
+	// Sort: NotReady nodes first, then by pod count descending.
+	nodes := make([]model.Node, len(state.Nodes))
+	copy(nodes, state.Nodes)
+	sort.Slice(nodes, func(i, j int) bool {
+		iReady := nodes[i].Status == "Ready"
+		jReady := nodes[j].Status == "Ready"
+		if iReady != jReady {
+			return !iReady // NotReady comes first
+		}
+		return len(byNode[nodes[i].Name]) > len(byNode[nodes[j].Name])
+	})
+
+	rows := make([]ovRow, 0, len(nodes)+len(state.Pods))
+	for _, n := range nodes {
 		pods := byNode[n.Name]
 		// When searching, hide nodes with no matching pods.
 		if query != "" && len(pods) == 0 && !nodeMatchesQuery(n, query) {
@@ -105,8 +119,8 @@ func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) 
 	}
 }
 
-// drawHeader renders a fixed column-label row at the top of the content area.
-// Columns match the pod row layout: indent(4) name(28) namespace(16) status(10) ready(6) restarts(5) age
+// drawHeader renders the sticky column-label row.
+// Columns: indent(4) name(28) version/ns(16) status(10) ready(6) restarts(5) age
 func (v *NodeOverviewView) drawHeader(s *ui.Screen, x, y, w int) {
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleHeader)
 	s.DrawText(x+4,  y, ui.StyleHeader, fmt.Sprintf("%-28s", "NAME"))
@@ -128,26 +142,31 @@ func (v *NodeOverviewView) drawRow(s *ui.Screen, x, y, w int, row ovRow, selecte
 	}
 }
 
+// drawNodeRow renders a node section header aligned to the same column grid as pod rows.
+// Columns used: NAME(x+4,28) | VERSION(x+32,16) | STATUS(x+48,10) | AGE(x+69)
 func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, selected bool) {
 	base := ui.StyleNodeHeader
 	dotStyle := ui.StyleNodeReadyDot
-	nameStyle := ui.StyleNodeName // bright sky-blue node name
+	nameStyle := ui.StyleNodeName
 	metaStyle := ui.StyleNodeMeta
+	statusStyle := ui.StyleNodeReadyDot
 	if n.Status != "Ready" {
 		dotStyle = ui.StyleNodeNotReadyDot
+		statusStyle = ui.StyleNodeNotReadyDot
 	}
 	if selected {
 		base = ui.StyleSelected
 		dotStyle = ui.StyleSelected
 		nameStyle = ui.StyleSelected
 		metaStyle = ui.StyleSelected
+		statusStyle = ui.StyleSelected
 	}
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', base)
 	s.DrawText(x, y, dotStyle, "●")
-	s.DrawText(x+2, y, nameStyle, fmt.Sprintf("%-28s", truncate(n.Name, 28)))
-	s.DrawText(x+30, y, dotStyle, fmt.Sprintf("%-12s", n.Status))
-	s.DrawText(x+42, y, metaStyle, fmt.Sprintf("%-10s", formatDuration(n.Age)))
-	s.DrawText(x+52, y, metaStyle, truncate(n.Version, w-52))
+	s.DrawText(x+4,  y, nameStyle,   fmt.Sprintf("%-28s", truncate(n.Name, 28)))
+	s.DrawText(x+32, y, metaStyle,   fmt.Sprintf("%-16s", truncate(n.Version, 16)))
+	s.DrawText(x+48, y, statusStyle, fmt.Sprintf("%-10s", n.Status))
+	s.DrawText(x+69, y, metaStyle,   formatDuration(n.Age))
 }
 
 func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, selected bool) {
@@ -165,10 +184,17 @@ func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, se
 	}
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', bg)
 
-	// Columns: indent=4, name=28(lavender), namespace=16(dim), status=10(colored), ready=6, restarts=5, age
-	s.DrawText(x+4, y, nameStyle, fmt.Sprintf("%-28s", truncate(p.Name, 28)))
-	s.DrawText(x+32, y, nsStyle, fmt.Sprintf("%-16s", truncate(p.Namespace, 16)))
-	s.DrawText(x+48, y, statusStyle, fmt.Sprintf("%-10s", p.Status))
+	// Status icon at x+1 (within the 4-char indent).
+	iconStyle := podBaseStyle(p.Status)
+	if selected {
+		iconStyle = ui.StyleSelected
+	}
+	s.DrawText(x+1, y, iconStyle, podStatusIcon(p.Status))
+
+	// Columns: indent=4, name=28, namespace=16, status=10, ready=6, restarts=5, age
+	s.DrawText(x+4,  y, nameStyle,   fmt.Sprintf("%-28s", truncate(p.Name, 28)))
+	s.DrawText(x+32, y, nsStyle,     fmt.Sprintf("%-16s", truncate(p.Namespace, 16)))
+	s.DrawText(x+48, y, statusStyle, fmt.Sprintf("%-10s", podStatusShort(p.Status)))
 	s.DrawText(x+58, y, statusStyle, fmt.Sprintf("%-6s", p.Ready))
 
 	// Restart count — coloured by severity when not selected.
@@ -181,17 +207,59 @@ func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, se
 	s.DrawText(x+69, y, statusStyle, formatDuration(p.Age))
 }
 
-// podBaseStyle returns the default (non-selected) style for a pod row.
+// podBaseStyle returns the default (non-selected) style for a pod row based on status.
 func podBaseStyle(status string) tcell.Style {
 	switch status {
 	case "Running":
 		return ui.StylePodRunning
-	case "Pending":
+	case "Pending", "Terminating":
 		return ui.StylePodPending
-	case "Failed", "Error", "OOMKilled", "CrashLoopBackOff":
+	case "Failed", "Error", "OOMKilled", "CrashLoopBackOff",
+		"ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "InvalidImageName":
 		return ui.StylePodFailed
 	}
 	return ui.StylePodDefault
+}
+
+// podStatusShort returns an abbreviated status string that fits within 10 chars.
+func podStatusShort(status string) string {
+	switch status {
+	case "CrashLoopBackOff":
+		return "CrashLoop"
+	case "ImagePullBackOff":
+		return "ImgPull"
+	case "ErrImagePull":
+		return "ImgPullErr"
+	case "CreateContainerConfigError":
+		return "CfgError"
+	case "InvalidImageName":
+		return "BadImage"
+	}
+	r := []rune(status)
+	if len(r) > 10 {
+		return string(r[:9]) + "…"
+	}
+	return status
+}
+
+// podStatusIcon returns a 1-char icon representing the pod's status.
+func podStatusIcon(status string) string {
+	switch status {
+	case "Running":
+		return "✔"
+	case "Pending":
+		return "↻"
+	case "Terminating":
+		return "⊘"
+	case "CrashLoopBackOff":
+		return "↻"
+	case "Failed", "Error", "OOMKilled", "ErrImagePull",
+		"CreateContainerConfigError", "InvalidImageName":
+		return "✖"
+	case "ImagePullBackOff":
+		return "⚠"
+	}
+	return "·"
 }
 
 // restartCountStyle returns a warning/critical style based on restart count.

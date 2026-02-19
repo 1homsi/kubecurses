@@ -11,8 +11,8 @@ import (
 	"github.com/1homsi/kubecurses/internal/app"
 )
 
-// Execute parses flags and runs the application. version is the build-time version string.
-func Execute(version string) {
+// Execute parses flags and runs the application.
+func Execute(version, commit, buildDate string) {
 	cfg := app.DefaultConfig()
 
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -23,7 +23,7 @@ func Execute(version string) {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("kubecurses", version)
+		fmt.Printf("kubecurses %s\ncommit:    %s\nbuilt:     %s\n", version, commit, buildDate)
 		os.Exit(0)
 	}
 
