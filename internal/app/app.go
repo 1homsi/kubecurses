@@ -60,7 +60,7 @@ func New(cfg Config) (*App, error) {
 	}
 
 	watcher := k8s.NewWatcher(cs, cfg.Namespace)
-	ov := &views.GridOverviewView{} // swap to &views.NodeOverviewView{} to use linear layout
+	ov := &views.NodeOverviewView{}
 
 	app := &App{
 		cfg:          cfg,
@@ -205,22 +205,8 @@ func (a *App) applyAction(action ui.Action) bool {
 	return false
 }
 
-// upDelta returns the selection delta for "move up" depending on active view.
-// In the grid overview j/k jump a full grid row (2 cards), elsewhere ±1.
-func (a *App) upDelta() int {
-	if a.state.ActiveTab == model.TabNodeOverview {
-		return -2
-	}
-	return -1
-}
-
-// downDelta returns the selection delta for "move down".
-func (a *App) downDelta() int {
-	if a.state.ActiveTab == model.TabNodeOverview {
-		return 2
-	}
-	return 1
-}
+func (a *App) upDelta() int   { return -1 }
+func (a *App) downDelta() int { return 1 }
 
 // gridMoveHorizontal moves the selected node card left (dir=-1) or right
 // (dir=+1) within the 2-column grid. Ignores movement that would wrap across
