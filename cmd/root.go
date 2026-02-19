@@ -29,6 +29,9 @@ func Execute(version string) {
 
 	a, err := app.New(cfg)
 	if err != nil {
+		if err == app.ErrCancelled {
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "kubecurses: init error: %v\n", err)
 		os.Exit(1)
 	}

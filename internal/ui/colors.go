@@ -15,13 +15,16 @@ var (
 	colorSelectedBg  = tcell.NewRGBColor(0, 68, 148)   // selected row
 
 	// Foregrounds
-	colorText    = tcell.NewRGBColor(220, 222, 235) // default text
-	colorDim     = tcell.NewRGBColor(100, 105, 130) // dim / inactive
-	colorGreen   = tcell.NewRGBColor(80, 200, 120)  // Running / Ready
-	colorAmber   = tcell.NewRGBColor(210, 160, 50)  // Pending / warn
-	colorOrange  = tcell.NewRGBColor(220, 120, 40)  // restart warning
-	colorRed     = tcell.NewRGBColor(210, 65, 65)   // Failed / NotReady / high restarts
-	colorBlue    = tcell.NewRGBColor(100, 170, 255) // version / metadata
+	colorText      = tcell.NewRGBColor(220, 222, 235) // default text
+	colorDim       = tcell.NewRGBColor(100, 105, 130) // dim / inactive
+	colorGreen     = tcell.NewRGBColor(80, 200, 120)  // Running / Ready
+	colorAmber     = tcell.NewRGBColor(210, 160, 50)  // Pending / warn
+	colorOrange    = tcell.NewRGBColor(220, 120, 40)  // restart warning
+	colorRed       = tcell.NewRGBColor(210, 65, 65)   // Failed / NotReady / high restarts
+	colorBlue      = tcell.NewRGBColor(100, 170, 255) // version / metadata
+	colorNodeName  = tcell.NewRGBColor(130, 190, 255) // node name — bright sky blue
+	colorPodName   = tcell.NewRGBColor(200, 210, 255) // pod name — light lavender white
+	colorNamespace = tcell.NewRGBColor(110, 120, 160) // namespace — muted blue-gray
 )
 
 var (
@@ -112,4 +115,28 @@ var (
 	StyleNodeNotReady = tcell.StyleDefault.
 				Foreground(colorRed).
 				Background(colorBg)
+
+	StyleDim = tcell.StyleDefault.
+			Foreground(colorDim).
+			Background(colorBg)
+
+	StyleSeparator = tcell.StyleDefault.
+			Foreground(tcell.NewRGBColor(45, 50, 75)).
+			Background(colorBg)
+
+	// Node name — bright sky blue, stands out in node header rows
+	StyleNodeName = tcell.StyleDefault.
+			Foreground(colorNodeName).
+			Background(colorNodeBg).
+			Bold(true)
+
+	// Pod name — light lavender-white so it reads clearly on dark bg
+	StylePodName = tcell.StyleDefault.
+			Foreground(colorPodName).
+			Background(colorBg)
+
+	// Namespace label — muted so name and status are visually dominant
+	StyleNamespace = tcell.StyleDefault.
+			Foreground(colorNamespace).
+			Background(colorBg)
 )

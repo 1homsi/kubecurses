@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,14 @@ import (
 	"github.com/1homsi/kubecurses/internal/ui/views"
 )
 
+// ErrCancelled is returned when the user quits the context picker.
+var ErrCancelled = errors.New("cancelled")
+
+// rowCounter is satisfied by any overview view that can report its row count.
+type rowCounter interface {
+	RowCount() int
+}
+
 // App is the top-level application struct.
 type App struct {
 	cfg          Config
@@ -20,23 +29,38 @@ type App struct {
 	state        model.AppState
 	watcher      *k8s.Watcher
 	views        [4]views.View
-	nodeOverview *views.NodeOverviewView // kept for RowCount access
+	nodeOverview rowCounter // kept for RowCount access; swap impl to change overview style
 }
 
 // New creates and initialises a new App from the given Config.
 func New(cfg Config) (*App, error) {
-	cs, err := k8s.NewClient(cfg.Kubeconfig, cfg.Context)
-	if err != nil {
-		return nil, fmt.Errorf("kubernetes client: %w", err)
-	}
-
+	// Screen must come up first so the cluster picker can run inside it.
 	scr, err := ui.NewScreen()
 	if err != nil {
 		return nil, fmt.Errorf("screen init: %w", err)
 	}
 
+	// Show context picker when no --context flag was given.
+	if cfg.Context == "" {
+		contexts, current, err := k8s.ListContexts(cfg.Kubeconfig)
+		if err == nil && len(contexts) > 1 {
+			chosen, quit := ui.PickContext(scr, contexts, current)
+			if quit {
+				scr.Fini()
+				return nil, ErrCancelled
+			}
+			cfg.Context = chosen
+		}
+	}
+
+	cs, err := k8s.NewClient(cfg.Kubeconfig, cfg.Context)
+	if err != nil {
+		scr.Fini()
+		return nil, fmt.Errorf("kubernetes client: %w", err)
+	}
+
 	watcher := k8s.NewWatcher(cs, cfg.Namespace)
-	ov := &views.NodeOverviewView{}
+	ov := &views.GridOverviewView{} // swap to &views.NodeOverviewView{} to use linear layout
 
 	app := &App{
 		cfg:          cfg,
@@ -159,13 +183,17 @@ func (a *App) applyAction(action ui.Action) bool {
 	case ui.ActionTab4:
 		a.state.SetTab(model.TabNamespaces)
 	case ui.ActionMoveUp:
-		a.state.MoveSelection(-1, a.activeLen())
+		a.state.MoveSelection(a.upDelta(), a.activeLen())
 	case ui.ActionMoveDown:
-		a.state.MoveSelection(1, a.activeLen())
+		a.state.MoveSelection(a.downDelta(), a.activeLen())
+	case ui.ActionMoveLeft:
+		a.gridMoveHorizontal(-1)
+	case ui.ActionMoveRight:
+		a.gridMoveHorizontal(1)
 	case ui.ActionPageUp:
-		a.state.MoveSelection(-10, a.activeLen())
+		a.state.MoveSelection(-4, a.activeLen())
 	case ui.ActionPageDown:
-		a.state.MoveSelection(10, a.activeLen())
+		a.state.MoveSelection(4, a.activeLen())
 	case ui.ActionRefresh:
 		a.watcher.TriggerRefresh()
 	case ui.ActionSearchOpen:
@@ -175,6 +203,41 @@ func (a *App) applyAction(action ui.Action) bool {
 		a.state.SearchQuery = ""
 	}
 	return false
+}
+
+// upDelta returns the selection delta for "move up" depending on active view.
+// In the grid overview j/k jump a full grid row (2 cards), elsewhere ±1.
+func (a *App) upDelta() int {
+	if a.state.ActiveTab == model.TabNodeOverview {
+		return -2
+	}
+	return -1
+}
+
+// downDelta returns the selection delta for "move down".
+func (a *App) downDelta() int {
+	if a.state.ActiveTab == model.TabNodeOverview {
+		return 2
+	}
+	return 1
+}
+
+// gridMoveHorizontal moves the selected node card left (dir=-1) or right
+// (dir=+1) within the 2-column grid. Ignores movement that would wrap across
+// row boundaries.
+func (a *App) gridMoveHorizontal(dir int) {
+	if a.state.ActiveTab != model.TabNodeOverview {
+		return
+	}
+	sel := a.state.Selection[model.TabNodeOverview]
+	col := sel % 2 // 0 = left column, 1 = right column
+	if dir == -1 && col == 0 {
+		return // already in left column
+	}
+	if dir == 1 && col == 1 {
+		return // already in right column
+	}
+	a.state.MoveSelection(dir, a.activeLen())
 }
 
 // activeLen returns the number of navigable rows in the currently active view.

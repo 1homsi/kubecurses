@@ -113,6 +113,7 @@ func (v *NodeOverviewView) drawRow(s *ui.Screen, x, y, w int, row ovRow, selecte
 func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, selected bool) {
 	base := ui.StyleNodeHeader
 	dotStyle := ui.StyleNodeReadyDot
+	nameStyle := ui.StyleNodeName // bright sky-blue node name
 	metaStyle := ui.StyleNodeMeta
 	if n.Status != "Ready" {
 		dotStyle = ui.StyleNodeNotReadyDot
@@ -120,40 +121,46 @@ func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, 
 	if selected {
 		base = ui.StyleSelected
 		dotStyle = ui.StyleSelected
+		nameStyle = ui.StyleSelected
 		metaStyle = ui.StyleSelected
 	}
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', base)
 	s.DrawText(x, y, dotStyle, "●")
-	s.DrawText(x+2, y, base, fmt.Sprintf("%-28s", truncate(n.Name, 28)))
+	s.DrawText(x+2, y, nameStyle, fmt.Sprintf("%-28s", truncate(n.Name, 28)))
 	s.DrawText(x+30, y, dotStyle, fmt.Sprintf("%-12s", n.Status))
 	s.DrawText(x+42, y, metaStyle, fmt.Sprintf("%-10s", formatDuration(n.Age)))
 	s.DrawText(x+52, y, metaStyle, truncate(n.Version, w-52))
 }
 
 func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, selected bool) {
-	rowStyle := podBaseStyle(p.Status)
+	statusStyle := podBaseStyle(p.Status)
+	nameStyle := ui.StylePodName
+	nsStyle := ui.StyleNamespace
 	if selected {
-		rowStyle = ui.StyleSelected
+		statusStyle = ui.StyleSelected
+		nameStyle = ui.StyleSelected
+		nsStyle = ui.StyleSelected
 	}
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleDefault)
+	bg := ui.StyleDefault
 	if selected {
-		s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleSelected)
+		bg = ui.StyleSelected
 	}
+	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', bg)
 
-	// Columns: indent=4, name=28, namespace=16, status=10, ready=6, restarts=5, age
-	s.DrawText(x+4, y, rowStyle, fmt.Sprintf("%-28s", truncate(p.Name, 28)))
-	s.DrawText(x+32, y, rowStyle, fmt.Sprintf("%-16s", truncate(p.Namespace, 16)))
-	s.DrawText(x+48, y, rowStyle, fmt.Sprintf("%-10s", p.Status))
-	s.DrawText(x+58, y, rowStyle, fmt.Sprintf("%-6s", p.Ready))
+	// Columns: indent=4, name=28(lavender), namespace=16(dim), status=10(colored), ready=6, restarts=5, age
+	s.DrawText(x+4, y, nameStyle, fmt.Sprintf("%-28s", truncate(p.Name, 28)))
+	s.DrawText(x+32, y, nsStyle, fmt.Sprintf("%-16s", truncate(p.Namespace, 16)))
+	s.DrawText(x+48, y, statusStyle, fmt.Sprintf("%-10s", p.Status))
+	s.DrawText(x+58, y, statusStyle, fmt.Sprintf("%-6s", p.Ready))
 
 	// Restart count — coloured by severity when not selected.
 	restartStr := fmt.Sprintf("%-5d", p.Restarts)
-	restartStyle := rowStyle
+	restartStyle := statusStyle
 	if !selected {
 		restartStyle = restartCountStyle(p.Restarts)
 	}
 	s.DrawText(x+64, y, restartStyle, restartStr)
-	s.DrawText(x+69, y, rowStyle, formatDuration(p.Age))
+	s.DrawText(x+69, y, statusStyle, formatDuration(p.Age))
 }
 
 // podBaseStyle returns the default (non-selected) style for a pod row.

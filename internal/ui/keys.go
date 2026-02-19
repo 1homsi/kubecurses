@@ -16,6 +16,8 @@ const (
 	ActionTab4
 	ActionMoveUp
 	ActionMoveDown
+	ActionMoveLeft
+	ActionMoveRight
 	ActionPageUp
 	ActionPageDown
 	ActionRefresh
@@ -47,6 +49,10 @@ func EventToAction(ev tcell.Event) Action {
 		return ActionMoveUp
 	case tcell.KeyDown:
 		return ActionMoveDown
+	case tcell.KeyLeft:
+		return ActionMoveLeft
+	case tcell.KeyRight:
+		return ActionMoveRight
 	case tcell.KeyPgUp:
 		return ActionPageUp
 	case tcell.KeyPgDn:
@@ -62,6 +68,10 @@ func EventToAction(ev tcell.Event) Action {
 		return ActionMoveDown
 	case 'k':
 		return ActionMoveUp
+	case 'h':
+		return ActionMoveLeft
+	case 'l':
+		return ActionMoveRight
 	case 'r':
 		return ActionRefresh
 	case '/':
