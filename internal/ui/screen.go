@@ -28,14 +28,18 @@ func NewScreen() (*Screen, error) {
 
 // DrawText renders a string at (x, y) using the given style.
 // Characters beyond the screen width are silently truncated.
+// Uses rune-based column advancement so multi-byte UTF-8 characters (●, ╭, ▶ …)
+// are placed correctly — ranging over a string gives runes but byte-based indices,
+// so we use a separate col counter instead of `x + byteOffset`.
 func (s *Screen) DrawText(x, y int, style tcell.Style, text string) {
 	w, h := s.Size()
-	for i, ch := range text {
-		col := x + i
+	col := x
+	for _, ch := range text {
 		if col >= w || y >= h || y < 0 {
 			break
 		}
 		s.SetContent(col, y, ch, nil, style)
+		col++
 	}
 }
 
