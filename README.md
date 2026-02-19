@@ -5,7 +5,7 @@
 Not a kubectl replacement — a fast, opinionated dashboard for when you need to know *which node a pod landed on, why it's failing, and how long it's been that way* without context-switching to a browser.
 
 ```
-1:Overview  2:Pods  3:Deployments  4:Namespaces    ctx:prod-33 | 3 nodes | 47 pods
+1:Overview  2:Xray  3:Deployments  4:Namespaces    ctx:prod-33 | 3 nodes | 47 pods
 
 ⚠  Scheduling imbalance: ip-172-16-217-131… has 74% of pods (26/35 total)
 
@@ -72,18 +72,29 @@ kubecurses --version
 | Key | Action |
 |-----|--------|
 | `1` | Overview — nodes with pods |
-| `2` | Pods — flat list |
+| `2` | Xray — namespace→pod→container tree |
 | `3` | Deployments |
 | `4` | Namespaces |
 | `Tab` / `Shift+Tab` | Next / previous tab |
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `PgDn` / `PgUp` | Page scroll |
+| `l` | Stream logs for selected pod / container (Xray tab) |
+| `c` | Switch cluster / context in-app (no restart) |
 | `/` | Search — filter rows live |
 | `Esc` | Clear search |
 | `r` | Manual refresh |
 | `?` | Help overlay |
 | `q` / `Ctrl+C` | Quit |
+
+### Inside the logs view
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` / `k` / `↑` | Scroll one line |
+| `PgDn` / `PgUp` | Scroll one page |
+| `s` | Toggle autoscroll (follow tail) |
+| `Esc` | Close logs and return to Xray |
 
 ## Views
 
@@ -105,11 +116,24 @@ Node section headers are sorted by health — **NotReady nodes surface first**, 
 
 **Column widths** scale with your terminal — names expand on wider displays.
 
-### Pods
-Flat list of all pods across all nodes. Respects the `--namespace` flag and the active search filter.
+### Xray
+Namespace → pod → container tree, similar to k9s's Xray view. Shows every container inside each pod with its ready state, restart count, and status. Press `l` on any pod or container row to stream its logs live.
 
 ### Deployments / Namespaces
 Standard tabular views with ready/available counts and ages.
+
+## Logs
+
+Navigate to the **Xray** tab (`2`), select a pod or container row, and press `l`. A bordered overlay streams logs live directly inside the dashboard — no separate terminal window needed.
+
+- Lines longer than the box width are hard-wrapped; each entry starts with a `▸` marker so you can tell entries apart at a glance.
+- Autoscroll follows the tail by default. Press `s` to freeze the view and scroll back freely; scrolling back to the bottom re-engages autoscroll automatically.
+- Mouse wheel scrolls the log content.
+- Press `Esc` to close the log view and return to Xray.
+
+## Cluster switching
+
+Press `c` from any tab to open the in-app context picker. Select a context and press `Enter` — kubecurses reconnects to the new cluster without restarting and without touching your shell's current context.
 
 ## Search
 
@@ -135,7 +159,6 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 ## Roadmap
 
 - [ ] Informer-based live updates (no polling)
-- [ ] Logs view (`l` to stream pod logs)
 - [ ] Exec shell (`e` to open a shell in a container)
 - [ ] Workload grouping — pods grouped by Deployment/StatefulSet/DaemonSet
 - [ ] Persisted settings (`~/.config/kubecurses/config.yaml`)
