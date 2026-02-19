@@ -26,6 +26,10 @@ jobs:
     name: Build & Release
     needs: [build]
     runs-on: ubuntu-latest
+    # Serialize release jobs so concurrent pushes never compute the same version.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -92,7 +96,11 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           NOTES="Automated release from commit ${GITHUB_SHA::7} on \`main\`."
-          gh release create "$VERSION" dist/*.tar.gz \
-            --title "$VERSION" \
-            --notes "$NOTES" \
-            --latest
+          if gh release view "$VERSION" &>/dev/null; then
+            echo "Release $VERSION already exists — skipping."
+          else
+            gh release create "$VERSION" dist/*.tar.gz \
+              --title "$VERSION" \
+              --notes "$NOTES" \
+              --latest
+          fi
