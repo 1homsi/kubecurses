@@ -134,9 +134,6 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 
 ## Roadmap
 
-- [x] Node CPU/mem/pod capacity via metrics-server
-- [x] Pending pod scheduler explainer
-- [x] Scheduling imbalance detection
 - [ ] Informer-based live updates (no polling)
 - [ ] Logs view (`l` to stream pod logs)
 - [ ] Exec shell (`e` to open a shell in a container)
