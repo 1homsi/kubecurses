@@ -1,0 +1,57 @@
+package k8s
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/1homsi/kubecurses/internal/model"
+)
+
+// FetchNodes lists all nodes in the cluster.
+func FetchNodes(ctx context.Context, cs *kubernetes.Clientset) ([]model.Node, error) {
+	list, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+
+	now := time.Now()
+	nodes := make([]model.Node, 0, len(list.Items))
+	for _, n := range list.Items {
+		status := "NotReady"
+		for _, c := range n.Status.Conditions {
+			if c.Type == "Ready" && c.Status == "True" {
+				status = "Ready"
+				break
+			}
+		}
+
+		var roles []string
+		for label := range n.Labels {
+			if strings.HasPrefix(label, "node-role.kubernetes.io/") {
+				role := strings.TrimPrefix(label, "node-role.kubernetes.io/")
+				roles = append(roles, role)
+			}
+		}
+		rolesStr := strings.Join(roles, ",")
+		if rolesStr == "" {
+			rolesStr = "<none>"
+		}
+
+		version := n.Status.NodeInfo.KubeletVersion
+		age := now.Sub(n.CreationTimestamp.Time).Truncate(time.Second)
+
+		nodes = append(nodes, model.Node{
+			Name:    n.Name,
+			Status:  status,
+			Roles:   rolesStr,
+			Age:     age,
+			Version: version,
+		})
+	}
+	return nodes, nil
+}

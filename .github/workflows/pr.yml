@@ -1,0 +1,57 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  report:
+    name: Post PR Comment
+    needs: [build]
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          BUILD_ICON=$([ "$BUILD_RESULT" = "success" ] && echo "✅" || echo "❌")
+          if [ "$BUILD_RESULT" = "success" ]; then
+            SUMMARY="All checks passed."
+          else
+            SUMMARY="One or more checks failed."
+          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          printf '### kubecurses CI — %s\n\n| Check | Result |\n|-------|--------|\n| Build & Test | %s `%s` |\n\n_Commit: `%s`_\n' \
+            "$SUMMARY" "$BUILD_ICON" "$BUILD_RESULT" "$SHORT_SHA" \
+            > /tmp/comment.md
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/comment.md
