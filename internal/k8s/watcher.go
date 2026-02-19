@@ -35,6 +35,11 @@ func (w *Watcher) Updates() <-chan model.Update {
 	return w.updates
 }
 
+// Clientset returns the underlying Kubernetes clientset.
+func (w *Watcher) Clientset() *kubernetes.Clientset {
+	return w.cs
+}
+
 // TriggerRefresh signals all watcher goroutines to re-fetch immediately.
 func (w *Watcher) TriggerRefresh() {
 	select {

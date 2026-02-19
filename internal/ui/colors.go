@@ -155,4 +155,15 @@ var (
 	StyleNamespace = tcell.StyleDefault.
 			Foreground(colorNamespace).
 			Background(colorBg)
+
+	// Xray view — namespace section header
+	StyleXrayNsHeader = tcell.StyleDefault.
+				Foreground(tcell.NewRGBColor(80, 210, 200)).
+				Background(tcell.NewRGBColor(12, 28, 32)).
+				Bold(true)
+
+	// Xray view — tree connector characters (├─ └─ │)
+	StyleXrayConnector = tcell.StyleDefault.
+				Foreground(tcell.NewRGBColor(55, 60, 85)).
+				Background(colorBg)
 )

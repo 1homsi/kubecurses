@@ -14,7 +14,7 @@ const (
 // TabNames maps Tab constants to display strings.
 var TabNames = [tabCount]string{
 	TabNodeOverview: "Overview",
-	TabPods:         "Pods",
+	TabPods:         "Xray",
 	TabDeployments:  "Deployments",
 	TabNamespaces:   "Namespaces",
 }
@@ -34,6 +34,21 @@ type AppState struct {
 	SearchMode  bool   // true while the user is typing a search query
 	SearchQuery string // live filter applied to the active view
 	HelpMode    bool   // true while the help overlay is shown
+
+	// Logs overlay state — active when LogsMode is true.
+	LogsMode       bool
+	LogsNamespace  string
+	LogsPod        string
+	LogsContainer  string   // empty = first container / all
+	LogsLines      []string // buffered log output
+	LogsAutoScroll bool     // follow the tail of the log
+	LogsOffset     int      // manual scroll position (ignored when AutoScroll is on)
+
+	// Cluster picker overlay state — active when ClusterPickerMode is true.
+	ClusterPickerMode bool
+	ClusterPickerList []string
+	ClusterPickerSel  int
+	ClusterPickerCurr string // currently connected context
 }
 
 // ApplyUpdate merges an incoming watcher update into state.

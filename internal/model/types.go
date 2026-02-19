@@ -4,6 +4,14 @@ package model
 
 import "time"
 
+// Container represents a single container within a pod.
+type Container struct {
+	Name     string
+	Ready    bool
+	Restarts int32
+	Status   string // "Running", or the Waiting/Terminated reason
+}
+
 // Pod represents a Kubernetes pod in normalized form.
 type Pod struct {
 	Namespace     string
@@ -13,7 +21,8 @@ type Pod struct {
 	Restarts      int32
 	Age           time.Duration
 	Node          string
-	PendingReason string // last FailedScheduling event message, if any
+	PendingReason string      // last FailedScheduling event message, if any
+	Containers    []Container // per-container status
 }
 
 // Node represents a Kubernetes node in normalized form.

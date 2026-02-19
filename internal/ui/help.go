@@ -29,11 +29,18 @@ var helpLines = []helpLine{
 	{key: "1  2  3  4", desc: "Jump to tab directly"},
 	{key: "", desc: ""},
 	{key: "", desc: "Actions"},
+	{key: "l", desc: "Stream logs for selected pod"},
+	{key: "c", desc: "Switch cluster / context"},
 	{key: "/", desc: "Search / filter"},
 	{key: "Esc", desc: "Clear search or close"},
 	{key: "r", desc: "Manual refresh"},
 	{key: "?", desc: "Toggle this help"},
 	{key: "q  Ctrl+C", desc: "Quit"},
+	{key: "", desc: ""},
+	{key: "", desc: "Logs view"},
+	{key: "s", desc: "Toggle autoscroll"},
+	{key: "j / k  PgDn / PgUp", desc: "Scroll"},
+	{key: "Esc", desc: "Close logs"},
 }
 
 // DrawHelp renders a centered help overlay on top of the current screen.

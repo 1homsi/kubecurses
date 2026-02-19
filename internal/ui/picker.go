@@ -2,7 +2,15 @@ package ui
 
 import (
 	"github.com/gdamore/tcell/v2"
+
+	"github.com/1homsi/kubecurses/internal/model"
 )
+
+// DrawClusterPicker renders the cluster picker overlay using state from AppState.
+// Called from draw() when state.ClusterPickerMode is true.
+func DrawClusterPicker(s *Screen, state *model.AppState) {
+	drawPicker(s, state.ClusterPickerList, state.ClusterPickerCurr, state.ClusterPickerSel)
+}
 
 var (
 	stylePickerBg       = tcell.StyleDefault.Background(tcell.NewRGBColor(13, 14, 20)).Foreground(tcell.NewRGBColor(220, 222, 235))
@@ -180,14 +188,22 @@ func drawPicker(s *Screen, contexts []string, current string, sel int) {
 
 	// ── hint bar ──────────────────────────────────────────────────────────
 	hintY := boxY + boxH - 2
-	hint := "  j/k: move   Enter: select   Esc: keep current   q: quit  "
+	hint := "  j/k: move  Enter: select  Esc: keep current  q: quit  "
 	s.FillRect(Rect{X: boxX + 1, Y: hintY, W: boxW - 2, H: 1}, ' ', stylePickerHint)
 	s.DrawTextTrunc(boxX+2, hintY, boxW-4, stylePickerHint, hint)
 }
 
-// drawBox draws a rounded-corner box border.
+// drawBox draws a rounded-corner box border and fills the interior.
 func drawBox(s *Screen, x, y, w, h int) {
-	style := stylePickerItem
+	drawBorderOnly(s, x, y, w, h, stylePickerItem)
+	for i := 1; i < h-1; i++ {
+		s.FillRect(Rect{X: x + 1, Y: y + i, W: w - 2, H: 1}, ' ', stylePickerItem)
+	}
+}
+
+// drawBorderOnly draws only the rounded-corner box border using the given style.
+// The interior is not touched — callers fill it themselves.
+func drawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {
 	s.DrawText(x, y, style, "╭")
 	s.DrawText(x+w-1, y, style, "╮")
 	s.DrawText(x, y+h-1, style, "╰")
@@ -199,6 +215,5 @@ func drawBox(s *Screen, x, y, w, h int) {
 	for i := 1; i < h-1; i++ {
 		s.DrawText(x, y+i, style, "│")
 		s.DrawText(x+w-1, y+i, style, "│")
-		s.FillRect(Rect{X: x + 1, Y: y + i, W: w - 2, H: 1}, ' ', stylePickerItem)
 	}
 }

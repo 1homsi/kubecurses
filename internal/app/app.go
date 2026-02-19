@@ -22,14 +22,22 @@ type rowCounter interface {
 	RowCount() int
 }
 
+const maxLogLines = 5000
+
 // App is the top-level application struct.
 type App struct {
-	cfg          Config
-	screen       *ui.Screen
-	state        model.AppState
-	watcher      *k8s.Watcher
-	views        [4]views.View
-	nodeOverview rowCounter // kept for RowCount access; swap impl to change overview style
+	cfg           Config
+	screen        *ui.Screen
+	state         model.AppState
+	watcher       *k8s.Watcher
+	watcherCancel context.CancelFunc // cancels only the watcher goroutines (not Run itself)
+	runCtx        context.Context    // Run()'s context, used when restarting the watcher
+	views         [4]views.View
+	nodeOverview  rowCounter      // kept for RowCount access; swap impl to change overview style
+	xrayView      *views.XrayView // typed for SelectedRef access
+	events        chan tcell.Event // fed by a single long-lived goroutine
+	logLines      chan string      // fed by the active log-streaming goroutine; nil when inactive
+	logsCancel    context.CancelFunc
 }
 
 // New creates and initialises a new App from the given Config.
@@ -61,19 +69,22 @@ func New(cfg Config) (*App, error) {
 
 	watcher := k8s.NewWatcher(cs, cfg.Namespace)
 	ov := &views.NodeOverviewView{}
+	xv := &views.XrayView{}
 
 	app := &App{
 		cfg:          cfg,
 		screen:       scr,
 		watcher:      watcher,
 		nodeOverview: ov,
+		xrayView:     xv,
 		state: model.AppState{
-			Namespace: cfg.Namespace,
-			Context:   cfg.Context,
+			Namespace:      cfg.Namespace,
+			Context:        cfg.Context,
+			LogsAutoScroll: true,
 		},
 		views: [4]views.View{
 			model.TabNodeOverview: ov,
-			model.TabPods:         &views.PodsView{},
+			model.TabPods:         xv,
 			model.TabDeployments:  &views.DeploymentsView{},
 			model.TabNamespaces:   &views.NamespacesView{},
 		},
@@ -87,10 +98,34 @@ func (a *App) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	a.watcher.Start(ctx, a.cfg.PollInterval)
+	// Store for switchCluster, which needs to derive a new watcher context.
+	a.runCtx = ctx
+
+	// Watchers run in their own child context so they can be cancelled and
+	// restarted independently when the user switches clusters.
+	watcherCtx, watcherCancel := context.WithCancel(ctx)
+	a.watcherCancel = watcherCancel
+	a.watcher.Start(watcherCtx, a.cfg.PollInterval)
 
 	ticker := time.NewTicker(a.cfg.PollInterval)
 	defer ticker.Stop()
+
+	// Single persistent goroutine feeds all tcell events onto a.events.
+	// This avoids goroutine accumulation / PollEvent deadlock on tab resume.
+	a.events = make(chan tcell.Event, 16)
+	go func() {
+		for {
+			ev := a.screen.PollEvent()
+			if ev == nil {
+				return // screen closed
+			}
+			select {
+			case a.events <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	a.draw()
 
@@ -107,7 +142,15 @@ func (a *App) Run(ctx context.Context) error {
 		case <-ticker.C:
 			a.watcher.TriggerRefresh()
 
-		case tcellEv := <-a.pollEvent(ctx):
+		case line := <-a.logLines:
+			// Append incoming log line; cap buffer to avoid unbounded growth.
+			a.state.LogsLines = append(a.state.LogsLines, line)
+			if len(a.state.LogsLines) > maxLogLines {
+				a.state.LogsLines = a.state.LogsLines[len(a.state.LogsLines)-maxLogLines:]
+			}
+			a.draw()
+
+		case tcellEv := <-a.events:
 			if tcellEv == nil {
 				continue
 			}
@@ -120,37 +163,219 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
-// pollEvent returns a channel that yields the next tcell event.
-func (a *App) pollEvent(ctx context.Context) <-chan tcell.Event {
-	ch := make(chan tcell.Event, 1)
-	go func() {
-		ev := a.screen.PollEvent()
-		select {
-		case ch <- ev:
-		case <-ctx.Done():
-		}
-	}()
-	return ch
-}
-
-// handleEvent dispatches to help, search, or normal mode event handling.
+// handleEvent dispatches to the appropriate mode handler.
 // Returns true if the application should quit.
 func (a *App) handleEvent(ev tcell.Event) bool {
-	// Terminal resize / resume — re-sync the screen to avoid display freeze
-	// when switching back to the tab or resizing the window.
+	// Terminal resize / resume — re-sync the screen to avoid display freeze.
 	if _, ok := ev.(*tcell.EventResize); ok {
 		a.screen.Sync()
 		return false
+	}
+	// Mouse events are handled regardless of overlay state.
+	if evMouse, ok := ev.(*tcell.EventMouse); ok {
+		return a.handleMouseEvent(evMouse)
 	}
 	// Any key dismisses the help overlay.
 	if a.state.HelpMode {
 		a.state.HelpMode = false
 		return false
 	}
+	if a.state.LogsMode {
+		return a.applyLogsAction(ui.EventToAction(ev))
+	}
+	if a.state.ClusterPickerMode {
+		return a.applyPickerAction(ui.EventToAction(ev))
+	}
 	if a.state.SearchMode {
 		return a.applySearchAction(ui.SearchEventToAction(ev), ev)
 	}
 	return a.applyAction(ui.EventToAction(ev))
+}
+
+// handleMouseEvent translates tcell mouse events into scroll/navigation actions.
+func (a *App) handleMouseEvent(ev *tcell.EventMouse) bool {
+	btn := ev.Buttons()
+	w, h := a.screen.Size()
+	// Logs box content height accounts for tab bar, status bar, box borders, and status strip.
+	logsContentH := h - 5
+	switch {
+	case btn&tcell.WheelUp != 0:
+		switch {
+		case a.state.LogsMode:
+			a.logsScrollBy(-3, logsContentH, len(ui.WrapLines(a.state.LogsLines, w-6)))
+		case a.state.ClusterPickerMode:
+			if a.state.ClusterPickerSel > 0 {
+				a.state.ClusterPickerSel--
+			}
+		default:
+			a.state.MoveSelection(-3, a.activeLen())
+		}
+	case btn&tcell.WheelDown != 0:
+		switch {
+		case a.state.LogsMode:
+			a.logsScrollBy(3, logsContentH, len(ui.WrapLines(a.state.LogsLines, w-6)))
+		case a.state.ClusterPickerMode:
+			if a.state.ClusterPickerSel < len(a.state.ClusterPickerList)-1 {
+				a.state.ClusterPickerSel++
+			}
+		default:
+			a.state.MoveSelection(3, a.activeLen())
+		}
+	}
+	return false
+}
+
+// applyLogsAction handles key events while the logs view is active.
+func (a *App) applyLogsAction(action ui.Action) bool {
+	w, h := a.screen.Size()
+	// tab(1) + status(1) + box-top-border(1) + status-strip(1) + box-bottom-border(1)
+	contentH := h - 5
+	totalLines := len(ui.WrapLines(a.state.LogsLines, w-6))
+
+	switch action {
+	case ui.ActionQuit:
+		return true
+	case ui.ActionSearchCancel: // Esc
+		a.closeLogs()
+	case ui.ActionMoveDown:
+		a.logsScrollBy(1, contentH, totalLines)
+	case ui.ActionMoveUp:
+		a.logsScrollBy(-1, contentH, totalLines)
+	case ui.ActionPageDown:
+		a.logsScrollBy(contentH, contentH, totalLines)
+	case ui.ActionPageUp:
+		a.logsScrollBy(-contentH, contentH, totalLines)
+	case ui.ActionLogsToggleScroll:
+		a.state.LogsAutoScroll = !a.state.LogsAutoScroll
+	}
+	return false
+}
+
+// logsScrollBy scrolls the log view by delta lines (negative = up, positive = down).
+// It handles the autoscroll→manual transition correctly:
+//   - Any upward delta from autoscroll mode snaps to the current bottom first, so
+//     the user starts scrolling from where they were visually, not from offset 0.
+//   - Offset is clamped to [0, maxOffset] after every operation so trackpad bursts
+//     never create drift that requires equal unwinding to recover.
+//   - Scrolling to the very bottom re-engages autoscroll.
+func (a *App) logsScrollBy(delta, contentH, totalLines int) {
+	maxOff := totalLines - contentH
+	if maxOff < 0 {
+		maxOff = 0
+	}
+
+	if delta < 0 {
+		// Upward scroll: if autoscroll was on, snap to the real bottom first.
+		if a.state.LogsAutoScroll {
+			a.state.LogsOffset = maxOff
+			a.state.LogsAutoScroll = false
+		}
+		a.state.LogsOffset += delta // delta is negative
+		if a.state.LogsOffset < 0 {
+			a.state.LogsOffset = 0
+		}
+	} else {
+		// Downward scroll: turn off autoscroll and clamp to max.
+		a.state.LogsAutoScroll = false
+		a.state.LogsOffset += delta
+		if a.state.LogsOffset >= maxOff {
+			a.state.LogsOffset = maxOff
+			a.state.LogsAutoScroll = true // re-engage autoscroll at the bottom
+		}
+	}
+}
+
+// applyPickerAction handles key events while the cluster picker overlay is open.
+func (a *App) applyPickerAction(action ui.Action) bool {
+	list := a.state.ClusterPickerList
+	switch action {
+	case ui.ActionQuit:
+		return true
+	case ui.ActionSearchCancel: // Esc — dismiss without switching
+		a.state.ClusterPickerMode = false
+	case ui.ActionConfirm: // Enter — switch to selected context
+		if a.state.ClusterPickerSel < len(list) {
+			chosen := list[a.state.ClusterPickerSel]
+			a.state.ClusterPickerMode = false
+			a.switchCluster(chosen)
+		}
+	case ui.ActionMoveDown:
+		if a.state.ClusterPickerSel < len(list)-1 {
+			a.state.ClusterPickerSel++
+		}
+	case ui.ActionMoveUp:
+		if a.state.ClusterPickerSel > 0 {
+			a.state.ClusterPickerSel--
+		}
+	}
+	return false
+}
+
+// switchCluster reconnects to a different Kubernetes context without restarting Run.
+func (a *App) switchCluster(newContext string) {
+	if newContext == a.cfg.Context {
+		return // already connected
+	}
+	// Stop existing watcher goroutines.
+	if a.watcherCancel != nil {
+		a.watcherCancel()
+	}
+	// Build a new client for the chosen context.
+	cs, err := k8s.NewClient(a.cfg.Kubeconfig, newContext)
+	if err != nil {
+		a.state.LastErr = fmt.Errorf("switch cluster: %w", err)
+		return
+	}
+	// Swap the watcher.
+	a.watcher = k8s.NewWatcher(cs, a.cfg.Namespace)
+	watcherCtx, watcherCancel := context.WithCancel(a.runCtx)
+	a.watcherCancel = watcherCancel
+	a.watcher.Start(watcherCtx, a.cfg.PollInterval)
+	// Update config and visible state; clear stale data.
+	a.cfg.Context = newContext
+	a.state.Context = newContext
+	a.state.Pods = nil
+	a.state.Nodes = nil
+	a.state.Namespaces = nil
+	a.state.Deployments = nil
+}
+
+// openLogs starts streaming logs for the given pod/container.
+func (a *App) openLogs(ns, pod, container string) {
+	// Cancel any in-progress stream first.
+	if a.logsCancel != nil {
+		a.logsCancel()
+		a.logsCancel = nil
+	}
+
+	logCtx, cancel := context.WithCancel(context.Background())
+	a.logsCancel = cancel
+
+	// New buffered channel — nil-ing the old one means any goroutine blocked
+	// on the previous channel's send will exit via ctx.Done().
+	a.logLines = make(chan string, 200)
+	a.state.LogsLines = nil
+	a.state.LogsOffset = 0
+	a.state.LogsAutoScroll = true
+	a.state.LogsNamespace = ns
+	a.state.LogsPod = pod
+	a.state.LogsContainer = container
+	a.state.LogsMode = true
+
+	cs := a.watcher.Clientset()
+	ch := a.logLines
+	go k8s.StreamLogs(logCtx, cs, ns, pod, container, ch)
+}
+
+// closeLogs stops the active log stream and hides the logs view.
+func (a *App) closeLogs() {
+	if a.logsCancel != nil {
+		a.logsCancel()
+		a.logsCancel = nil
+	}
+	a.logLines = nil // nil channel never fires in select
+	a.state.LogsMode = false
+	a.state.LogsLines = nil
 }
 
 // applySearchAction handles key events while the search bar is active.
@@ -215,8 +440,42 @@ func (a *App) applyAction(action ui.Action) bool {
 		a.state.SearchQuery = ""
 	case ui.ActionHelp:
 		a.state.HelpMode = true
+	case ui.ActionLogsOpen:
+		a.handleLogsOpen()
+	case ui.ActionSwitchCluster:
+		a.handleClusterPickerOpen()
 	}
 	return false
+}
+
+// handleClusterPickerOpen fetches available contexts and opens the in-app picker.
+func (a *App) handleClusterPickerOpen() {
+	contexts, current, err := k8s.ListContexts(a.cfg.Kubeconfig)
+	if err != nil || len(contexts) == 0 {
+		return
+	}
+	sel := 0
+	for i, c := range contexts {
+		if c == current {
+			sel = i
+			break
+		}
+	}
+	a.state.ClusterPickerList = contexts
+	a.state.ClusterPickerCurr = current
+	a.state.ClusterPickerSel = sel
+	a.state.ClusterPickerMode = true
+}
+
+// handleLogsOpen opens logs for the currently selected pod/container.
+func (a *App) handleLogsOpen() {
+	switch a.state.ActiveTab {
+	case model.TabPods: // Xray tab
+		ns, pod, container := a.xrayView.SelectedRef(a.state.Selection[model.TabPods])
+		if pod != "" {
+			a.openLogs(ns, pod, container)
+		}
+	}
 }
 
 func (a *App) upDelta() int   { return -1 }
@@ -244,10 +503,9 @@ func (a *App) gridMoveHorizontal(dir int) {
 func (a *App) activeLen() int {
 	switch a.state.ActiveTab {
 	case model.TabNodeOverview:
-		// NodeOverviewView knows its actual row count after the last draw.
 		return a.nodeOverview.RowCount()
 	case model.TabPods:
-		return len(a.state.Pods)
+		return a.xrayView.RowCount()
 	case model.TabNamespaces:
 		return len(a.state.Namespaces)
 	case model.TabDeployments:
@@ -262,10 +520,17 @@ func (a *App) draw() {
 	a.screen.Clear()
 	ui.DrawTabBar(a.screen, w, a.state.ActiveTab, &a.state)
 	contentRect := ui.ContentRect(w, h)
-	a.views[a.state.ActiveTab].Draw(a.screen, contentRect, &a.state)
+	if a.state.LogsMode {
+		ui.DrawLogsView(a.screen, contentRect, &a.state)
+	} else {
+		a.views[a.state.ActiveTab].Draw(a.screen, contentRect, &a.state)
+	}
 	ui.DrawStatusBar(a.screen, w, h, &a.state)
 	if a.state.HelpMode {
 		ui.DrawHelp(a.screen, w, h)
+	}
+	if a.state.ClusterPickerMode {
+		ui.DrawClusterPicker(a.screen, &a.state)
 	}
 	a.screen.Show()
 }
