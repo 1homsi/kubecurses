@@ -124,6 +124,22 @@ var (
 			Foreground(tcell.NewRGBColor(45, 50, 75)).
 			Background(colorBg)
 
+	// Warning banner row (scheduling imbalance, etc.)
+	StyleWarning = tcell.StyleDefault.
+			Foreground(colorAmber).
+			Background(tcell.NewRGBColor(30, 24, 8)).
+			Bold(true)
+
+	// Pending reason sub-row
+	StylePendingReason = tcell.StyleDefault.
+				Foreground(colorDim).
+				Background(colorBg)
+
+	// Metrics percentages — colour by severity
+	StyleMetricsOK   = tcell.StyleDefault.Foreground(colorGreen).Background(colorNodeBg)
+	StyleMetricsWarn = tcell.StyleDefault.Foreground(colorAmber).Background(colorNodeBg)
+	StyleMetricsCrit = tcell.StyleDefault.Foreground(colorRed).Background(colorNodeBg).Bold(true)
+
 	// Node name — bright sky blue, stands out in node header rows
 	StyleNodeName = tcell.StyleDefault.
 			Foreground(colorNodeName).

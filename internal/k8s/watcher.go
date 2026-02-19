@@ -31,14 +31,11 @@ func NewWatcher(cs *kubernetes.Clientset, namespace string) *Watcher {
 }
 
 // Updates returns the channel on which model.Update values are sent.
-// The main goroutine should read from this channel.
 func (w *Watcher) Updates() <-chan model.Update {
 	return w.updates
 }
 
-// TriggerRefresh sends a signal to all watcher goroutines requesting an
-// immediate re-fetch. Non-blocking: if the channel is already full the
-// signal is dropped (a refresh is already pending).
+// TriggerRefresh signals all watcher goroutines to re-fetch immediately.
 func (w *Watcher) TriggerRefresh() {
 	select {
 	case w.refresh <- struct{}{}:
@@ -46,8 +43,7 @@ func (w *Watcher) TriggerRefresh() {
 	}
 }
 
-// Start launches one goroutine per resource type. ctx cancellation stops all
-// goroutines. interval controls the polling frequency.
+// Start launches one goroutine per resource type.
 func (w *Watcher) Start(ctx context.Context, interval time.Duration) {
 	go w.watchPods(ctx, interval)
 	go w.watchNodes(ctx, interval)
@@ -80,7 +76,19 @@ func (w *Watcher) watchPods(ctx context.Context, interval time.Duration) {
 
 func (w *Watcher) fetchAndSendPods(ctx context.Context) {
 	pods, err := FetchPods(ctx, w.cs, w.namespace)
-	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods, Err: err})
+	if err != nil {
+		w.send(ctx, model.Update{Kind: model.UpdatePods, Err: err})
+		return
+	}
+	// Best-effort: enrich Pending pods with the last FailedScheduling reason.
+	if reasons, rerr := FetchPendingReasons(ctx, w.cs); rerr == nil {
+		for i := range pods {
+			if pods[i].Status == "Pending" {
+				pods[i].PendingReason = reasons[pods[i].Name]
+			}
+		}
+	}
+	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
 }
 
 func (w *Watcher) watchNodes(ctx context.Context, interval time.Duration) {
@@ -101,7 +109,21 @@ func (w *Watcher) watchNodes(ctx context.Context, interval time.Duration) {
 
 func (w *Watcher) fetchAndSendNodes(ctx context.Context) {
 	nodes, err := FetchNodes(ctx, w.cs)
-	w.send(ctx, model.Update{Kind: model.UpdateNodes, Nodes: nodes, Err: err})
+	if err != nil {
+		w.send(ctx, model.Update{Kind: model.UpdateNodes, Err: err})
+		return
+	}
+	// Best-effort: merge metrics-server data if available.
+	if metrics, _ := FetchNodeMetrics(ctx, w.cs); metrics != nil {
+		for i := range nodes {
+			if m, ok := metrics[nodes[i].Name]; ok {
+				nodes[i].UsedCPUm = m.cpuM
+				nodes[i].UsedMemMi = m.memMi
+				nodes[i].MetricsOK = true
+			}
+		}
+	}
+	w.send(ctx, model.Update{Kind: model.UpdateNodes, Nodes: nodes})
 }
 
 func (w *Watcher) watchNamespaces(ctx context.Context, interval time.Duration) {

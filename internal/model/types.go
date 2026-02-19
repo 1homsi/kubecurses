@@ -6,13 +6,14 @@ import "time"
 
 // Pod represents a Kubernetes pod in normalized form.
 type Pod struct {
-	Namespace string
-	Name      string
-	Ready     string // e.g. "2/3"
-	Status    string
-	Restarts  int32
-	Age       time.Duration
-	Node      string
+	Namespace     string
+	Name          string
+	Ready         string // e.g. "2/3"
+	Status        string
+	Restarts      int32
+	Age           time.Duration
+	Node          string
+	PendingReason string // last FailedScheduling event message, if any
 }
 
 // Node represents a Kubernetes node in normalized form.
@@ -22,6 +23,14 @@ type Node struct {
 	Roles   string
 	Age     time.Duration
 	Version string
+	// Allocatable resources — always populated from node spec.
+	AllocCPUm  int64 // allocatable CPU in millicores
+	AllocMemMi int64 // allocatable memory in MiB
+	AllocPods  int   // max allocatable pods
+	// Current usage — populated only when metrics-server is available.
+	UsedCPUm  int64
+	UsedMemMi int64
+	MetricsOK bool
 }
 
 // Namespace represents a Kubernetes namespace in normalized form.

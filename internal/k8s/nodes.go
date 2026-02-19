@@ -12,7 +12,7 @@ import (
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
-// FetchNodes lists all nodes in the cluster.
+// FetchNodes lists all nodes in the cluster and populates allocatable resources.
 func FetchNodes(ctx context.Context, cs *kubernetes.Clientset) ([]model.Node, error) {
 	list, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -42,15 +42,20 @@ func FetchNodes(ctx context.Context, cs *kubernetes.Clientset) ([]model.Node, er
 			rolesStr = "<none>"
 		}
 
-		version := n.Status.NodeInfo.KubeletVersion
-		age := now.Sub(n.CreationTimestamp.Time).Truncate(time.Second)
+		// Allocatable resources.
+		cpuQ := n.Status.Allocatable["cpu"]
+		memQ := n.Status.Allocatable["memory"]
+		podsQ := n.Status.Allocatable["pods"]
 
 		nodes = append(nodes, model.Node{
-			Name:    n.Name,
-			Status:  status,
-			Roles:   rolesStr,
-			Age:     age,
-			Version: version,
+			Name:       n.Name,
+			Status:     status,
+			Roles:      rolesStr,
+			Age:        now.Sub(n.CreationTimestamp.Time).Truncate(time.Second),
+			Version:    n.Status.NodeInfo.KubeletVersion,
+			AllocCPUm:  cpuQ.MilliValue(),
+			AllocMemMi: memQ.Value() / (1024 * 1024),
+			AllocPods:  int(podsQ.Value()),
 		})
 	}
 	return nodes, nil

@@ -11,11 +11,23 @@ import (
 	"github.com/1homsi/kubecurses/internal/ui"
 )
 
-// ovRow is a flat display row — either a node section header or a pod entry.
+// rowKind distinguishes display row types.
+type rowKind int
+
+const (
+	rkPod     rowKind = iota
+	rkNode            // node section header
+	rkReason         // pending-pod explainer sub-row
+	rkWarning         // scheduling imbalance banner
+)
+
+// ovRow is a flat display row.
 type ovRow struct {
-	isNode bool
-	node   model.Node
-	pod    model.Pod
+	kind     rowKind
+	node     model.Node
+	pod      model.Pod
+	podCount int    // for rkNode: pods scheduled on this node
+	text     string // for rkReason / rkWarning
 }
 
 // NodeOverviewView renders nodes as section headers with their pods nested below.
@@ -24,15 +36,15 @@ type NodeOverviewView struct {
 	scrollOffset int
 }
 
-// dynCols computes dynamic column widths from the available row width w.
-// The right block (STATUS 10 + READY 6 + REST 5 + AGE 11 = 32) is right-anchored.
-// The remaining space is split 2:1 between the NAME and NAMESPACE/VERSION columns.
+// dynCols computes dynamic column widths from row width w.
+// Right block: STATUS(10)+READY(6)+REST(5)+AGE(11) = 32 chars, right-anchored.
+// Remaining space split 2:1 between NAME and NAMESPACE/VERSION columns.
 func dynCols(w int) (nameW, nsW, statusAt int) {
 	statusAt = w - 32
 	if statusAt < 40 {
 		statusAt = 40
 	}
-	avail := statusAt - 4 // 4-char left indent (icon + spaces)
+	avail := statusAt - 4 // 4-char indent (icon + spaces)
 	nameW = avail * 2 / 3
 	if nameW < 20 {
 		nameW = 20
@@ -45,8 +57,7 @@ func dynCols(w int) (nameW, nsW, statusAt int) {
 	return
 }
 
-// buildRows groups pods under their node, respecting the active namespace filter.
-// Nodes are sorted: NotReady first, then by pod count descending.
+// buildRows groups pods under their node, injects warning/reason rows.
 func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRow {
 	byNode := make(map[string][]model.Pod, len(state.Nodes))
 	var unscheduled []model.Pod
@@ -65,6 +76,7 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 		}
 	}
 
+	// Sort: NotReady first, then by pod count descending.
 	nodes := make([]model.Node, len(state.Nodes))
 	copy(nodes, state.Nodes)
 	sort.Slice(nodes, func(i, j int) bool {
@@ -76,25 +88,63 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 		return len(byNode[nodes[i].Name]) > len(byNode[nodes[j].Name])
 	})
 
+	// ── scheduling imbalance detection ──────────────────────────────────
+	var warningRows []ovRow
+	if len(nodes) > 1 {
+		totalPods := 0
+		maxPods := 0
+		heaviest := ""
+		for _, n := range nodes {
+			c := len(byNode[n.Name])
+			totalPods += c
+			if c > maxPods {
+				maxPods = c
+				heaviest = n.Name
+			}
+		}
+		if totalPods > 0 && maxPods > 0 {
+			avg := totalPods / len(nodes)
+			if avg > 0 && maxPods >= avg*2 {
+				pct := maxPods * 100 / totalPods
+				msg := fmt.Sprintf(
+					"⚠  Scheduling imbalance: %s has %d%% of pods (%d/%d total)",
+					truncate(heaviest, 30), pct, maxPods, totalPods,
+				)
+				warningRows = append(warningRows, ovRow{kind: rkWarning, text: msg})
+			}
+		}
+	}
+
 	rows := make([]ovRow, 0, len(nodes)+len(state.Pods))
 	for _, n := range nodes {
 		pods := byNode[n.Name]
 		if query != "" && len(pods) == 0 && !nodeMatchesQuery(n, query) {
 			continue
 		}
-		rows = append(rows, ovRow{isNode: true, node: n})
+		rows = append(rows, ovRow{kind: rkNode, node: n, podCount: len(pods)})
 		for _, p := range pods {
-			rows = append(rows, ovRow{pod: p})
+			rows = append(rows, ovRow{kind: rkPod, pod: p})
+			// ── pending pod explainer ────────────────────────────────────
+			if p.Status == "Pending" && p.PendingReason != "" {
+				rows = append(rows, ovRow{kind: rkReason, text: p.PendingReason})
+			}
 		}
 	}
 
 	if len(unscheduled) > 0 {
-		rows = append(rows, ovRow{isNode: true, node: model.Node{Name: "<unscheduled>", Status: "Unknown"}})
+		rows = append(rows, ovRow{
+			kind: rkNode,
+			node: model.Node{Name: "<unscheduled>", Status: "Unknown"},
+		})
 		for _, p := range unscheduled {
-			rows = append(rows, ovRow{pod: p})
+			rows = append(rows, ovRow{kind: rkPod, pod: p})
+			if p.Status == "Pending" && p.PendingReason != "" {
+				rows = append(rows, ovRow{kind: rkReason, text: p.PendingReason})
+			}
 		}
 	}
-	return rows
+
+	return append(warningRows, rows...)
 }
 
 func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
@@ -107,7 +157,6 @@ func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) 
 	}
 
 	v.drawHeader(s, r.X, r.Y, r.W)
-
 	content := ui.Rect{X: r.X, Y: r.Y + 1, W: r.W, H: r.H - 1}
 
 	if len(v.rows) > 0 {
@@ -141,26 +190,34 @@ func (v *NodeOverviewView) drawHeader(s *ui.Screen, x, y, w int) {
 	ageAt := restAt + 5
 
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleHeader)
-	s.DrawText(x+4,          y, ui.StyleHeader, fmt.Sprintf("%-*s", nameW, "NAME"))
-	s.DrawText(x+4+nameW,    y, ui.StyleHeader, fmt.Sprintf("%-*s", nsW, "NAMESPACE"))
-	s.DrawText(x+statusAt,   y, ui.StyleHeader, fmt.Sprintf("%-10s", "STATUS"))
-	s.DrawText(x+readyAt,    y, ui.StyleHeader, fmt.Sprintf("%-6s", "READY"))
-	s.DrawText(x+restAt,     y, ui.StyleHeader, fmt.Sprintf("%-5s", "REST"))
-	s.DrawText(x+ageAt,      y, ui.StyleHeader, "AGE")
+	s.DrawText(x+4,        y, ui.StyleHeader, fmt.Sprintf("%-*s", nameW, "NAME"))
+	s.DrawText(x+4+nameW,  y, ui.StyleHeader, fmt.Sprintf("%-*s", nsW, "NAMESPACE"))
+	s.DrawText(x+statusAt, y, ui.StyleHeader, fmt.Sprintf("%-10s", "STATUS"))
+	s.DrawText(x+readyAt,  y, ui.StyleHeader, fmt.Sprintf("%-6s", "READY"))
+	s.DrawText(x+restAt,   y, ui.StyleHeader, fmt.Sprintf("%-5s", "REST"))
+	s.DrawText(x+ageAt,    y, ui.StyleHeader, "AGE")
 }
 
 // RowCount returns the current number of display rows.
 func (v *NodeOverviewView) RowCount() int { return len(v.rows) }
 
 func (v *NodeOverviewView) drawRow(s *ui.Screen, x, y, w int, row ovRow, selected bool) {
-	if row.isNode {
-		v.drawNodeRow(s, x, y, w, row.node, selected)
-	} else {
+	switch row.kind {
+	case rkNode:
+		v.drawNodeRow(s, x, y, w, row.node, row.podCount, selected)
+	case rkReason:
+		v.drawReasonRow(s, x, y, w, row.text)
+	case rkWarning:
+		v.drawWarningRow(s, x, y, w, row.text)
+	default:
 		v.drawPodRow(s, x, y, w, row.pod, selected)
 	}
 }
 
-func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, selected bool) {
+// drawNodeRow renders a node section header aligned to the same column grid as pod rows.
+// When metrics-server data is available, the NAMESPACE column shows cpu/mem/pods;
+// otherwise it shows the k8s version.
+func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, podCount int, selected bool) {
 	nameW, nsW, statusAt := dynCols(w)
 	ageAt := statusAt + 21 // +10 status +6 ready +5 rest
 
@@ -181,11 +238,61 @@ func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, 
 		statusStyle = ui.StyleSelected
 	}
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', base)
-	s.DrawText(x,           y, dotStyle,    "●")
-	s.DrawText(x+4,         y, nameStyle,   fmt.Sprintf("%-*s", nameW, truncate(n.Name, nameW)))
-	s.DrawText(x+4+nameW,   y, metaStyle,   fmt.Sprintf("%-*s", nsW, truncate(n.Version, nsW)))
-	s.DrawText(x+statusAt,  y, statusStyle, fmt.Sprintf("%-10s", n.Status))
-	s.DrawText(x+ageAt,     y, metaStyle,   formatDuration(n.Age))
+	s.DrawText(x,          y, dotStyle,    "●")
+	s.DrawText(x+4,        y, nameStyle,   fmt.Sprintf("%-*s", nameW, truncate(n.Name, nameW)))
+	s.DrawText(x+statusAt, y, statusStyle, fmt.Sprintf("%-10s", n.Status))
+	s.DrawText(x+ageAt,    y, metaStyle,   formatDuration(n.Age))
+
+	// NAMESPACE column: metrics when available, version otherwise.
+	if n.MetricsOK && n.AllocCPUm > 0 {
+		cpuPct := int(n.UsedCPUm * 100 / n.AllocCPUm)
+		memPct := int(n.UsedMemMi * 100 / n.AllocMemMi)
+
+		cpuStyle, memStyle := metaStyle, metaStyle
+		if !selected {
+			cpuStyle = metricStyle(cpuPct)
+			memStyle = metricStyle(memPct)
+		}
+
+		col := x + 4 + nameW
+		cpu := fmt.Sprintf("cpu:%d%% ", cpuPct)
+		mem := fmt.Sprintf("mem:%d%% ", memPct)
+		s.DrawText(col, y, cpuStyle, truncate(cpu, nsW/2))
+		col += len([]rune(cpu))
+		if col < x+4+nameW+nsW {
+			s.DrawText(col, y, memStyle, truncate(mem, (x+4+nameW+nsW)-col))
+		}
+		col += len([]rune(mem))
+		if n.AllocPods > 0 && col < x+4+nameW+nsW {
+			pods := fmt.Sprintf("%d/%d pods", podCount, n.AllocPods)
+			s.DrawText(col, y, metaStyle, truncate(pods, (x+4+nameW+nsW)-col))
+		}
+	} else {
+		s.DrawText(x+4+nameW, y, metaStyle, fmt.Sprintf("%-*s", nsW, truncate(n.Version, nsW)))
+	}
+}
+
+// metricStyle returns a colour-coded style for a percentage value.
+func metricStyle(pct int) tcell.Style {
+	switch {
+	case pct >= 85:
+		return ui.StyleMetricsCrit
+	case pct >= 70:
+		return ui.StyleMetricsWarn
+	}
+	return ui.StyleMetricsOK
+}
+
+// drawReasonRow renders a pending-pod explainer sub-row.
+func (v *NodeOverviewView) drawReasonRow(s *ui.Screen, x, y, w int, reason string) {
+	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleDefault)
+	s.DrawText(x+4, y, ui.StylePendingReason, truncate("→ "+reason, w-6))
+}
+
+// drawWarningRow renders a scheduling imbalance banner.
+func (v *NodeOverviewView) drawWarningRow(s *ui.Screen, x, y, w int, msg string) {
+	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleWarning)
+	s.DrawText(x+2, y, ui.StyleWarning, truncate(msg, w-4))
 }
 
 func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, selected bool) {
@@ -208,7 +315,6 @@ func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, se
 	}
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', bg)
 
-	// Status icon within the 4-char left indent.
 	iconStyle := podBaseStyle(p.Status)
 	if selected {
 		iconStyle = ui.StyleSelected
@@ -228,7 +334,6 @@ func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, se
 	s.DrawText(x+ageAt,  y, statusStyle,  formatDuration(p.Age))
 }
 
-// podBaseStyle returns the default (non-selected) style for a pod row based on status.
 func podBaseStyle(status string) tcell.Style {
 	switch status {
 	case "Running":
@@ -242,7 +347,6 @@ func podBaseStyle(status string) tcell.Style {
 	return ui.StylePodDefault
 }
 
-// podStatusShort returns an abbreviated status string that fits within 10 chars.
 func podStatusShort(status string) string {
 	switch status {
 	case "CrashLoopBackOff":
@@ -263,7 +367,6 @@ func podStatusShort(status string) string {
 	return status
 }
 
-// podStatusIcon returns a 1-char icon representing the pod's status.
 func podStatusIcon(status string) string {
 	switch status {
 	case "Running":
@@ -283,7 +386,6 @@ func podStatusIcon(status string) string {
 	return "·"
 }
 
-// restartCountStyle returns a warning/critical style based on restart count.
 func restartCountStyle(restarts int32) tcell.Style {
 	switch {
 	case restarts >= 10:
