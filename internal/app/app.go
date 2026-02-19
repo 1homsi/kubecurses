@@ -136,6 +136,12 @@ func (a *App) pollEvent(ctx context.Context) <-chan tcell.Event {
 // handleEvent dispatches to help, search, or normal mode event handling.
 // Returns true if the application should quit.
 func (a *App) handleEvent(ev tcell.Event) bool {
+	// Terminal resize / resume — re-sync the screen to avoid display freeze
+	// when switching back to the tab or resizing the window.
+	if _, ok := ev.(*tcell.EventResize); ok {
+		a.screen.Sync()
+		return false
+	}
 	// Any key dismisses the help overlay.
 	if a.state.HelpMode {
 		a.state.HelpMode = false
