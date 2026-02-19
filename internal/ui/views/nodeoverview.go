@@ -19,10 +19,30 @@ type ovRow struct {
 }
 
 // NodeOverviewView renders nodes as section headers with their pods nested below.
-// This is the main/default view.
 type NodeOverviewView struct {
 	rows         []ovRow
 	scrollOffset int
+}
+
+// dynCols computes dynamic column widths from the available row width w.
+// The right block (STATUS 10 + READY 6 + REST 5 + AGE 11 = 32) is right-anchored.
+// The remaining space is split 2:1 between the NAME and NAMESPACE/VERSION columns.
+func dynCols(w int) (nameW, nsW, statusAt int) {
+	statusAt = w - 32
+	if statusAt < 40 {
+		statusAt = 40
+	}
+	avail := statusAt - 4 // 4-char left indent (icon + spaces)
+	nameW = avail * 2 / 3
+	if nameW < 20 {
+		nameW = 20
+	}
+	nsW = avail - nameW
+	if nsW < 10 {
+		nsW = 10
+		nameW = avail - nsW
+	}
+	return
 }
 
 // buildRows groups pods under their node, respecting the active namespace filter.
@@ -45,14 +65,13 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 		}
 	}
 
-	// Sort: NotReady nodes first, then by pod count descending.
 	nodes := make([]model.Node, len(state.Nodes))
 	copy(nodes, state.Nodes)
 	sort.Slice(nodes, func(i, j int) bool {
 		iReady := nodes[i].Status == "Ready"
 		jReady := nodes[j].Status == "Ready"
 		if iReady != jReady {
-			return !iReady // NotReady comes first
+			return !iReady
 		}
 		return len(byNode[nodes[i].Name]) > len(byNode[nodes[j].Name])
 	})
@@ -60,7 +79,6 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 	rows := make([]ovRow, 0, len(nodes)+len(state.Pods))
 	for _, n := range nodes {
 		pods := byNode[n.Name]
-		// When searching, hide nodes with no matching pods.
 		if query != "" && len(pods) == 0 && !nodeMatchesQuery(n, query) {
 			continue
 		}
@@ -83,19 +101,15 @@ func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) 
 	v.rows = v.buildRows(state, state.SearchQuery)
 	sel := state.Selection[model.TabNodeOverview]
 
-	// Clamp selection to actual row count.
 	if sel >= len(v.rows) && len(v.rows) > 0 {
 		sel = len(v.rows) - 1
 		state.Selection[model.TabNodeOverview] = sel
 	}
 
-	// ── sticky column header ──────────────────────────────────────────────
 	v.drawHeader(s, r.X, r.Y, r.W)
 
-	// Content area is one row shorter (header takes r.Y).
 	content := ui.Rect{X: r.X, Y: r.Y + 1, W: r.W, H: r.H - 1}
 
-	// Adjust scroll to keep sel visible.
 	if len(v.rows) > 0 {
 		if sel < v.scrollOffset {
 			v.scrollOffset = sel
@@ -119,19 +133,23 @@ func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) 
 	}
 }
 
-// drawHeader renders the sticky column-label row.
-// Columns: indent(4) name(28) version/ns(16) status(10) ready(6) restarts(5) age
+// drawHeader renders the sticky column-label row with dynamic column widths.
 func (v *NodeOverviewView) drawHeader(s *ui.Screen, x, y, w int) {
+	nameW, nsW, statusAt := dynCols(w)
+	readyAt := statusAt + 10
+	restAt := readyAt + 6
+	ageAt := restAt + 5
+
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleHeader)
-	s.DrawText(x+4,  y, ui.StyleHeader, fmt.Sprintf("%-28s", "NAME"))
-	s.DrawText(x+32, y, ui.StyleHeader, fmt.Sprintf("%-16s", "NAMESPACE"))
-	s.DrawText(x+48, y, ui.StyleHeader, fmt.Sprintf("%-10s", "STATUS"))
-	s.DrawText(x+58, y, ui.StyleHeader, fmt.Sprintf("%-6s",  "READY"))
-	s.DrawText(x+64, y, ui.StyleHeader, fmt.Sprintf("%-5s",  "REST"))
-	s.DrawText(x+69, y, ui.StyleHeader, "AGE")
+	s.DrawText(x+4,          y, ui.StyleHeader, fmt.Sprintf("%-*s", nameW, "NAME"))
+	s.DrawText(x+4+nameW,    y, ui.StyleHeader, fmt.Sprintf("%-*s", nsW, "NAMESPACE"))
+	s.DrawText(x+statusAt,   y, ui.StyleHeader, fmt.Sprintf("%-10s", "STATUS"))
+	s.DrawText(x+readyAt,    y, ui.StyleHeader, fmt.Sprintf("%-6s", "READY"))
+	s.DrawText(x+restAt,     y, ui.StyleHeader, fmt.Sprintf("%-5s", "REST"))
+	s.DrawText(x+ageAt,      y, ui.StyleHeader, "AGE")
 }
 
-// RowCount returns the current number of display rows (used by app for MoveSelection).
+// RowCount returns the current number of display rows.
 func (v *NodeOverviewView) RowCount() int { return len(v.rows) }
 
 func (v *NodeOverviewView) drawRow(s *ui.Screen, x, y, w int, row ovRow, selected bool) {
@@ -142,9 +160,10 @@ func (v *NodeOverviewView) drawRow(s *ui.Screen, x, y, w int, row ovRow, selecte
 	}
 }
 
-// drawNodeRow renders a node section header aligned to the same column grid as pod rows.
-// Columns used: NAME(x+4,28) | VERSION(x+32,16) | STATUS(x+48,10) | AGE(x+69)
 func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, selected bool) {
+	nameW, nsW, statusAt := dynCols(w)
+	ageAt := statusAt + 21 // +10 status +6 ready +5 rest
+
 	base := ui.StyleNodeHeader
 	dotStyle := ui.StyleNodeReadyDot
 	nameStyle := ui.StyleNodeName
@@ -162,14 +181,19 @@ func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, 
 		statusStyle = ui.StyleSelected
 	}
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', base)
-	s.DrawText(x, y, dotStyle, "●")
-	s.DrawText(x+4,  y, nameStyle,   fmt.Sprintf("%-28s", truncate(n.Name, 28)))
-	s.DrawText(x+32, y, metaStyle,   fmt.Sprintf("%-16s", truncate(n.Version, 16)))
-	s.DrawText(x+48, y, statusStyle, fmt.Sprintf("%-10s", n.Status))
-	s.DrawText(x+69, y, metaStyle,   formatDuration(n.Age))
+	s.DrawText(x,           y, dotStyle,    "●")
+	s.DrawText(x+4,         y, nameStyle,   fmt.Sprintf("%-*s", nameW, truncate(n.Name, nameW)))
+	s.DrawText(x+4+nameW,   y, metaStyle,   fmt.Sprintf("%-*s", nsW, truncate(n.Version, nsW)))
+	s.DrawText(x+statusAt,  y, statusStyle, fmt.Sprintf("%-10s", n.Status))
+	s.DrawText(x+ageAt,     y, metaStyle,   formatDuration(n.Age))
 }
 
 func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, selected bool) {
+	nameW, nsW, statusAt := dynCols(w)
+	readyAt := statusAt + 10
+	restAt := readyAt + 6
+	ageAt := restAt + 5
+
 	statusStyle := podBaseStyle(p.Status)
 	nameStyle := ui.StylePodName
 	nsStyle := ui.StyleNamespace
@@ -184,27 +208,24 @@ func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, se
 	}
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', bg)
 
-	// Status icon at x+1 (within the 4-char indent).
+	// Status icon within the 4-char left indent.
 	iconStyle := podBaseStyle(p.Status)
 	if selected {
 		iconStyle = ui.StyleSelected
 	}
 	s.DrawText(x+1, y, iconStyle, podStatusIcon(p.Status))
 
-	// Columns: indent=4, name=28, namespace=16, status=10, ready=6, restarts=5, age
-	s.DrawText(x+4,  y, nameStyle,   fmt.Sprintf("%-28s", truncate(p.Name, 28)))
-	s.DrawText(x+32, y, nsStyle,     fmt.Sprintf("%-16s", truncate(p.Namespace, 16)))
-	s.DrawText(x+48, y, statusStyle, fmt.Sprintf("%-10s", podStatusShort(p.Status)))
-	s.DrawText(x+58, y, statusStyle, fmt.Sprintf("%-6s", p.Ready))
+	s.DrawText(x+4,        y, nameStyle,   fmt.Sprintf("%-*s", nameW, truncate(p.Name, nameW)))
+	s.DrawText(x+4+nameW,  y, nsStyle,     fmt.Sprintf("%-*s", nsW, truncate(p.Namespace, nsW)))
+	s.DrawText(x+statusAt, y, statusStyle, fmt.Sprintf("%-10s", podStatusShort(p.Status)))
+	s.DrawText(x+readyAt,  y, statusStyle, fmt.Sprintf("%-6s", p.Ready))
 
-	// Restart count — coloured by severity when not selected.
-	restartStr := fmt.Sprintf("%-5d", p.Restarts)
 	restartStyle := statusStyle
 	if !selected {
 		restartStyle = restartCountStyle(p.Restarts)
 	}
-	s.DrawText(x+64, y, restartStyle, restartStr)
-	s.DrawText(x+69, y, statusStyle, formatDuration(p.Age))
+	s.DrawText(x+restAt, y, restartStyle, fmt.Sprintf("%-5d", p.Restarts))
+	s.DrawText(x+ageAt,  y, statusStyle,  formatDuration(p.Age))
 }
 
 // podBaseStyle returns the default (non-selected) style for a pod row based on status.
