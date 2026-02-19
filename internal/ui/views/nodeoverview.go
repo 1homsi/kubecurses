@@ -75,28 +75,46 @@ func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) 
 		state.Selection[model.TabNodeOverview] = sel
 	}
 
+	// ── sticky column header ──────────────────────────────────────────────
+	v.drawHeader(s, r.X, r.Y, r.W)
+
+	// Content area is one row shorter (header takes r.Y).
+	content := ui.Rect{X: r.X, Y: r.Y + 1, W: r.W, H: r.H - 1}
+
 	// Adjust scroll to keep sel visible.
 	if len(v.rows) > 0 {
 		if sel < v.scrollOffset {
 			v.scrollOffset = sel
 		}
-		if sel >= v.scrollOffset+r.H {
-			v.scrollOffset = sel - r.H + 1
+		if sel >= v.scrollOffset+content.H {
+			v.scrollOffset = sel - content.H + 1
 		}
 		if v.scrollOffset < 0 {
 			v.scrollOffset = 0
 		}
 	}
 
-	for i := 0; i < r.H; i++ {
+	for i := 0; i < content.H; i++ {
 		rowIdx := v.scrollOffset + i
-		y := r.Y + i
+		y := content.Y + i
 		if rowIdx >= len(v.rows) {
-			s.FillRect(ui.Rect{X: r.X, Y: y, W: r.W, H: 1}, ' ', ui.StyleDefault)
+			s.FillRect(ui.Rect{X: content.X, Y: y, W: content.W, H: 1}, ' ', ui.StyleDefault)
 			continue
 		}
-		v.drawRow(s, r.X, y, r.W, v.rows[rowIdx], rowIdx == sel)
+		v.drawRow(s, content.X, y, content.W, v.rows[rowIdx], rowIdx == sel)
 	}
+}
+
+// drawHeader renders a fixed column-label row at the top of the content area.
+// Columns match the pod row layout: indent(4) name(28) namespace(16) status(10) ready(6) restarts(5) age
+func (v *NodeOverviewView) drawHeader(s *ui.Screen, x, y, w int) {
+	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleHeader)
+	s.DrawText(x+4,  y, ui.StyleHeader, fmt.Sprintf("%-28s", "NAME"))
+	s.DrawText(x+32, y, ui.StyleHeader, fmt.Sprintf("%-16s", "NAMESPACE"))
+	s.DrawText(x+48, y, ui.StyleHeader, fmt.Sprintf("%-10s", "STATUS"))
+	s.DrawText(x+58, y, ui.StyleHeader, fmt.Sprintf("%-6s",  "READY"))
+	s.DrawText(x+64, y, ui.StyleHeader, fmt.Sprintf("%-5s",  "REST"))
+	s.DrawText(x+69, y, ui.StyleHeader, "AGE")
 }
 
 // RowCount returns the current number of display rows (used by app for MoveSelection).
