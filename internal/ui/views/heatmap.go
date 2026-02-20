@@ -10,14 +10,8 @@ import (
 	"github.com/1homsi/kubecurses/internal/ui"
 )
 
-// Honeycomb layout constants for the pod grid inside each node box.
-// Each pod = one ⬢ glyph + 1 space = 2 cols wide, 1 row tall.
-// Odd hex-rows are indented by hexStagger to produce the brick offset.
-const (
-	hexCellW     = 2 // ⬢ (1 col) + 1 space gap
-	hexStagger   = 1 // odd-row left-indent
-	maxHexPerRow = 7 // cap per even row
-)
+// hexCellW is the column width of one pod cell: ⬢ glyph (1 col) + 1 space gap.
+const hexCellW = 2
 
 var (
 	hexChar      = "⬢"
@@ -105,13 +99,18 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	boxW := availW / cols
 	state.HeatmapCols = cols
 
+	// ── symmetric hex-cluster row plan ────────────────────────────────────────
+	plan := model.HeatmapPlanRows(len(state.Nodes), cols)
+	state.HeatmapRowPlan = plan
+	nBoxRows := len(plan)
+
 	// ── hex border taper depth ────────────────────────────────────────────────
 	// Must match DrawHexBorder's own numTaper calculation so content rows line up.
 	numTaper := 2
 	// ── uniform box height: global max across all nodes ───────────────────────
 	// All boxes the same size — height driven purely by the busiest node.
-	// Overhead = 2*numTaper (taper rows) + 1 (title body row).
-	hexOverhead := 2*numTaper + 1
+	// Overhead = 2*numTaper taper rows; title sits on the last shoulder row (free).
+	hexOverhead := 2 * numTaper
 	globalBoxH := hexOverhead
 	for _, node := range state.Nodes {
 		nPods := len(nodePods[node.Name])
@@ -121,13 +120,8 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			globalBoxH = h
 		}
 	}
-	nodeBoxH := make([]int, len(state.Nodes))
-	for i := range nodeBoxH {
-		nodeBoxH[i] = globalBoxH
-	}
 
 	// All box-rows share the same global height.
-	nBoxRows := heatmapTotalBoxRows(len(state.Nodes), cols)
 	boxRowH := make([]int, nBoxRows)
 	for i := range boxRowH {
 		boxRowH[i] = globalBoxH
@@ -146,7 +140,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	if sel >= len(state.Nodes) {
 		sel = 0
 	}
-	selBoxRow, _ := model.HeatmapNodeToRowCol(sel, cols)
+	selBoxRow, _ := model.HeatmapNodeToRowColPlan(plan, sel)
 	scroll := state.HeatmapScroll
 	if selBoxRow < scroll {
 		scroll = selBoxRow
@@ -167,16 +161,14 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			break
 		}
 
-		rowN := model.HeatmapRowCols(curBoxRow, cols)
-		// Odd rows are offset right by half a box width — the honeycomb stagger.
-		nodeXBase := r.X
-		if curBoxRow%2 == 1 {
-			nodeXBase += boxW / 2
-		}
+		rowN := plan[curBoxRow]
+		// Center each row horizontally — symmetric hex-cluster layout.
+		rowW := rowN * boxW
+		nodeXBase := r.X + (availW-rowW)/2
 		rowMaxH := boxRowH[curBoxRow]
 
 		for col := 0; col < rowN; col++ {
-			nodeIdx := model.HeatmapRowColToNode(curBoxRow, col, cols)
+			nodeIdx := model.HeatmapRowColToNodePlan(plan, curBoxRow, col)
 			if nodeIdx >= len(state.Nodes) {
 				break
 			}
@@ -186,7 +178,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			pods := nodePods[node.Name]
 			gridW := boxW - 2
 			isSelected := nodeIdx == sel
-			nH := nodeBoxH[nodeIdx] // each node drawn at its own height
+			nH := globalBoxH
 
 			// hexagonal border
 			borderStyle := ui.StyleNodeHeader
@@ -195,9 +187,8 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			}
 			ui.DrawHexBorder(s, x, y, boxW, nH, borderStyle)
 
-			// Title on the first body row (y+numTaper).
-			// All taper rows above/below are left empty so the hex silhouette shows.
-			titleY := y + numTaper
+			// Title on the last shoulder row (y+numTaper-1) — no wasted body row.
+			titleY := y + numTaper - 1
 			dotStyle := ui.StyleNodeReadyDot
 			if node.Status != "Ready" {
 				dotStyle = ui.StyleNodeNotReadyDot
@@ -220,46 +211,32 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 					fmt.Sprintf("CPU %3d%% MEM %3d%%", cpuPct, memPct))
 			}
 
-			// ── honeycomb pod grid (starts one row after title) ────────────────
-			innerY := y + numTaper + 1
+			// ── pod grid: symmetric hex-cluster layout ────────────────────────
+			innerY := y + numTaper
+			maxPerRow := gridW / hexCellW
+			if maxPerRow < 1 {
+				maxPerRow = 1
+			}
+			podPlan := model.HeatmapPlanRows(len(pods), maxPerRow)
 			pIdx := 0
-			hexRow := 0
-			for pIdx < len(pods) {
-				evenRow := hexRow%2 == 0
-				cellsInRow := gridW / hexCellW
-				if cellsInRow > maxHexPerRow {
-					cellsInRow = maxHexPerRow
+			for hexRow, rowCells := range podPlan {
+				if pIdx >= len(pods) {
+					break
 				}
-				if !evenRow {
-					odd := (gridW - hexStagger) / hexCellW
-					if odd > maxHexPerRow-1 {
-						odd = maxHexPerRow - 1
-					}
-					cellsInRow = odd
-				}
-				if cellsInRow < 1 {
-					cellsInRow = 1
-				}
-
-				podXOff := x + 1
-				if !evenRow {
-					podXOff += hexStagger
-				}
+				// Center this pod row within the inner grid width.
+				rowW := rowCells * hexCellW
+				podXOff := x + 1 + (gridW-rowW)/2
 				rowY := innerY + hexRow
-
-				for ci := 0; ci < cellsInRow && pIdx < len(pods); ci++ {
+				for ci := 0; ci < rowCells && pIdx < len(pods); ci++ {
 					p := pods[pIdx]
-					cellX := podXOff + ci*hexCellW
 					style := heatmapPodStyle(p.Status)
-					s.DrawText(cellX, rowY, style, cellChar)
+					s.DrawText(podXOff+ci*hexCellW, rowY, style, cellChar)
 					pIdx++
 				}
-				hexRow++
 			}
 		}
 
-		// 1-row gap between box rows so caps don't scatter into adjacent rows.
-		y += rowMaxH + 1
+		y += rowMaxH
 		curBoxRow++
 	}
 
@@ -274,48 +251,17 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	drawHeatmapHint(s, r.X+2, r.Y+r.H-1, r.W-4)
 }
 
-// heatmapTotalBoxRows returns the number of honeycomb box-rows needed for nNodes.
-func heatmapTotalBoxRows(nNodes, cols int) int {
-	rows := 0
-	remaining := nNodes
-	for remaining > 0 {
-		rowCols := model.HeatmapRowCols(rows, cols)
-		if rowCols > remaining {
-			rowCols = remaining
-		}
-		remaining -= rowCols
-		rows++
-	}
-	return rows
-}
-
-// heatmapPodRows returns the number of terminal rows consumed by nPods cells.
+// heatmapPodRows returns the number of terminal rows consumed by nPods cells
+// using the same symmetric hex-cluster plan as the pod rendering.
 func heatmapPodRows(nPods, gridW int) int {
 	if gridW < hexCellW {
 		gridW = hexCellW
 	}
-	hexRows, remaining, row := 0, nPods, 0
-	for remaining > 0 {
-		var c int
-		if row%2 == 0 {
-			c = gridW / hexCellW
-			if c > maxHexPerRow {
-				c = maxHexPerRow
-			}
-		} else {
-			c = (gridW - hexStagger) / hexCellW
-			if c > maxHexPerRow-1 {
-				c = maxHexPerRow - 1
-			}
-		}
-		if c < 1 {
-			c = 1
-		}
-		remaining -= c
-		hexRows++
-		row++
+	maxPerRow := gridW / hexCellW
+	if maxPerRow < 1 {
+		maxPerRow = 1
 	}
-	return hexRows
+	return len(model.HeatmapPlanRows(nPods, maxPerRow))
 }
 
 // heatmapPodStyle returns the tcell style for a pod hex cell.

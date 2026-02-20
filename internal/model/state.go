@@ -64,6 +64,7 @@ type AppState struct {
 	HeatmapNodeDetail bool   // true = node-detail overlay is active
 	HeatmapDetailNode string // name of the node being detailed
 	HeatmapDetailSel  int    // selected pod index within the node-detail view
+	HeatmapRowPlan    []int  // symmetric row-width plan written by HeatmapView.Draw each frame
 }
 
 // ApplyUpdate merges an incoming watcher update into state.
@@ -171,6 +172,102 @@ func HeatmapRowColToNode(row, col, cols int) int {
 	idx := 0
 	for r := 0; r < row; r++ {
 		idx += HeatmapRowCols(r, cols)
+	}
+	return idx + col
+}
+
+// ── Symmetric hex-cluster plan helpers ────────────────────────────────────────
+
+// HeatmapPlanRows returns a symmetric hex-cluster row plan for n nodes.
+// The plan is a slice of per-row node counts [a, a+1, …, c, …, a+1, a] that
+// forms a hexagonal-cluster silhouette. The widest row is at most maxCols.
+// For very large n (exceeding any pure symmetric shape), additional center rows
+// of width maxCols are inserted between the two tapering halves.
+func HeatmapPlanRows(n, maxCols int) []int {
+	if n <= 0 {
+		return nil
+	}
+	if maxCols < 1 {
+		maxCols = 1
+	}
+
+	// Find the symmetric shape [a, a+1, …, c, …, a+1, a] with minimum waste.
+	// Tiebreak on fewer rows (larger a relative to c = less taper = flatter shape).
+	bestWaste := -1
+	bestRows := -1
+	bestA, bestC := 1, 1
+	for c := 1; c <= maxCols; c++ {
+		// Iterate a from c down to 1; stop at the first a where cap >= n.
+		for a := c; a >= 1; a-- {
+			cap := heatmapHexCap(a, c)
+			if cap >= n {
+				waste := cap - n
+				rows := 2*(c-a) + 1
+				if bestWaste < 0 || waste < bestWaste || (waste == bestWaste && rows < bestRows) {
+					bestWaste = waste
+					bestRows = rows
+					bestA, bestC = a, c
+				}
+				break
+			}
+		}
+		if bestWaste == 0 && bestRows == 1 {
+			break // single-row perfect fit — can't do better
+		}
+	}
+
+	if bestWaste >= 0 {
+		return heatmapBuildPlan(bestA, bestC, 0)
+	}
+
+	// n exceeds the capacity of any pure symmetric shape at maxCols.
+	// Extend by inserting extra full-width center rows.
+	pureCap := heatmapHexCap(1, maxCols)
+	extra := (n - pureCap + maxCols - 1) / maxCols
+	return heatmapBuildPlan(1, maxCols, extra)
+}
+
+// heatmapHexCap returns the total node capacity of shape [a, a+1, …, c, …, a+1, a].
+func heatmapHexCap(a, c int) int {
+	return (c-a)*(c+a-1) + c
+}
+
+// heatmapBuildPlan constructs [a, …, c, (extra × c), …, a].
+func heatmapBuildPlan(a, c, extra int) []int {
+	steps := c - a
+	rows := make([]int, 0, 2*steps+1+extra)
+	for w := a; w <= c; w++ {
+		rows = append(rows, w)
+	}
+	for i := 0; i < extra; i++ {
+		rows = append(rows, c)
+	}
+	for w := c - 1; w >= a; w-- {
+		rows = append(rows, w)
+	}
+	return rows
+}
+
+// HeatmapNodeToRowColPlan converts a flat node index to (row, col) using a plan.
+func HeatmapNodeToRowColPlan(plan []int, nodeIdx int) (row, col int) {
+	for r, rowCols := range plan {
+		if nodeIdx < rowCols {
+			return r, nodeIdx
+		}
+		nodeIdx -= rowCols
+	}
+	// Clamp to last valid position.
+	if len(plan) > 0 {
+		return len(plan) - 1, plan[len(plan)-1] - 1
+	}
+	return 0, 0
+}
+
+// HeatmapRowColToNodePlan converts (row, col) to a flat node index using a plan.
+func HeatmapRowColToNodePlan(plan []int, row, col int) int {
+	idx := 0
+	for r := 0; r < row && r < len(plan); r++ {
+		idx += plan[r]
 	}
 	return idx + col
 }

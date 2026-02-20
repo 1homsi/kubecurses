@@ -521,19 +521,18 @@ func (a *App) applyAction(action ui.Action) bool {
 
 	case ui.ActionPageUp:
 		if onHeatmap && !inDetail {
-			cols := a.heatmapCols()
+			plan := a.state.HeatmapRowPlan
 			sel := a.state.Selection[model.TabHeatmap]
-			row, col := model.HeatmapNodeToRowCol(sel, cols)
+			row, col := model.HeatmapNodeToRowColPlan(plan, sel)
 			newRow := row - 3
 			if newRow < 0 {
 				newRow = 0
 			}
-			newRowCols := model.HeatmapRowCols(newRow, cols)
 			newCol := col
-			if newCol >= newRowCols {
-				newCol = newRowCols - 1
+			if len(plan) > newRow && newCol >= plan[newRow] {
+				newCol = plan[newRow] - 1
 			}
-			if newSel := model.HeatmapRowColToNode(newRow, newCol, cols); newSel >= 0 && newSel < len(a.state.Nodes) {
+			if newSel := model.HeatmapRowColToNodePlan(plan, newRow, newCol); newSel >= 0 && newSel < len(a.state.Nodes) {
 				a.state.Selection[model.TabHeatmap] = newSel
 			}
 		} else if inDetail {
@@ -547,16 +546,18 @@ func (a *App) applyAction(action ui.Action) bool {
 
 	case ui.ActionPageDown:
 		if onHeatmap && !inDetail {
-			cols := a.heatmapCols()
+			plan := a.state.HeatmapRowPlan
 			sel := a.state.Selection[model.TabHeatmap]
-			row, col := model.HeatmapNodeToRowCol(sel, cols)
+			row, col := model.HeatmapNodeToRowColPlan(plan, sel)
 			newRow := row + 3
-			newRowCols := model.HeatmapRowCols(newRow, cols)
-			newCol := col
-			if newCol >= newRowCols {
-				newCol = newRowCols - 1
+			if newRow >= len(plan) {
+				newRow = len(plan) - 1
 			}
-			if newSel := model.HeatmapRowColToNode(newRow, newCol, cols); newSel >= 0 && newSel < len(a.state.Nodes) {
+			newCol := col
+			if len(plan) > newRow && newCol >= plan[newRow] {
+				newCol = plan[newRow] - 1
+			}
+			if newSel := model.HeatmapRowColToNodePlan(plan, newRow, newCol); newSel >= 0 && newSel < len(a.state.Nodes) {
 				a.state.Selection[model.TabHeatmap] = newSel
 			}
 		} else if inDetail {
@@ -665,54 +666,45 @@ func (a *App) gridMoveHorizontal(dir int) {
 	a.state.MoveSelection(dir, a.activeLen())
 }
 
-// heatmapCols returns the number of grid columns currently used by the heatmap.
-func (a *App) heatmapCols() int {
-	if c := a.state.HeatmapCols; c > 0 {
-		return c
-	}
-	return 1
-}
-
 // heatmapMoveUp moves the heatmap selection up by one grid row.
-// Handles the honeycomb stagger where odd rows have cols-1 nodes.
 func (a *App) heatmapMoveUp() {
-	if len(a.state.Nodes) == 0 {
+	plan := a.state.HeatmapRowPlan
+	if len(a.state.Nodes) == 0 || len(plan) == 0 {
 		return
 	}
-	cols := a.heatmapCols()
 	sel := a.state.Selection[model.TabHeatmap]
-	row, col := model.HeatmapNodeToRowCol(sel, cols)
+	row, col := model.HeatmapNodeToRowColPlan(plan, sel)
 	if row == 0 {
 		return
 	}
 	newRow := row - 1
-	newRowCols := model.HeatmapRowCols(newRow, cols)
 	newCol := col
-	if newCol >= newRowCols {
-		newCol = newRowCols - 1
+	if newCol >= plan[newRow] {
+		newCol = plan[newRow] - 1
 	}
-	newSel := model.HeatmapRowColToNode(newRow, newCol, cols)
+	newSel := model.HeatmapRowColToNodePlan(plan, newRow, newCol)
 	if newSel >= 0 && newSel < len(a.state.Nodes) {
 		a.state.Selection[model.TabHeatmap] = newSel
 	}
 }
 
 // heatmapMoveDown moves the heatmap selection down by one grid row.
-// Handles the honeycomb stagger where odd rows have cols-1 nodes.
 func (a *App) heatmapMoveDown() {
-	if len(a.state.Nodes) == 0 {
+	plan := a.state.HeatmapRowPlan
+	if len(a.state.Nodes) == 0 || len(plan) == 0 {
 		return
 	}
-	cols := a.heatmapCols()
 	sel := a.state.Selection[model.TabHeatmap]
-	row, col := model.HeatmapNodeToRowCol(sel, cols)
+	row, col := model.HeatmapNodeToRowColPlan(plan, sel)
 	newRow := row + 1
-	newRowCols := model.HeatmapRowCols(newRow, cols)
-	newCol := col
-	if newCol >= newRowCols {
-		newCol = newRowCols - 1
+	if newRow >= len(plan) {
+		return
 	}
-	newSel := model.HeatmapRowColToNode(newRow, newCol, cols)
+	newCol := col
+	if newCol >= plan[newRow] {
+		newCol = plan[newRow] - 1
+	}
+	newSel := model.HeatmapRowColToNodePlan(plan, newRow, newCol)
 	if newSel >= 0 && newSel < len(a.state.Nodes) {
 		a.state.Selection[model.TabHeatmap] = newSel
 	}
@@ -720,12 +712,12 @@ func (a *App) heatmapMoveDown() {
 
 // heatmapMoveLeft moves the heatmap selection left by one cell within its row.
 func (a *App) heatmapMoveLeft() {
-	if len(a.state.Nodes) == 0 {
+	plan := a.state.HeatmapRowPlan
+	if len(a.state.Nodes) == 0 || len(plan) == 0 {
 		return
 	}
-	cols := a.heatmapCols()
 	sel := a.state.Selection[model.TabHeatmap]
-	_, col := model.HeatmapNodeToRowCol(sel, cols)
+	_, col := model.HeatmapNodeToRowColPlan(plan, sel)
 	if col > 0 {
 		a.state.Selection[model.TabHeatmap]--
 	}
@@ -733,15 +725,14 @@ func (a *App) heatmapMoveLeft() {
 
 // heatmapMoveRight moves the heatmap selection right by one cell within its row.
 func (a *App) heatmapMoveRight() {
-	if len(a.state.Nodes) == 0 {
+	plan := a.state.HeatmapRowPlan
+	if len(a.state.Nodes) == 0 || len(plan) == 0 {
 		return
 	}
-	cols := a.heatmapCols()
 	sel := a.state.Selection[model.TabHeatmap]
-	row, col := model.HeatmapNodeToRowCol(sel, cols)
-	rowCols := model.HeatmapRowCols(row, cols)
+	row, col := model.HeatmapNodeToRowColPlan(plan, sel)
 	next := sel + 1
-	if col+1 < rowCols && next < len(a.state.Nodes) {
+	if col+1 < plan[row] && next < len(a.state.Nodes) {
 		a.state.Selection[model.TabHeatmap] = next
 	}
 }
