@@ -131,6 +131,10 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	}
 
 	// ── scroll: keep selected node visible ────────────────────────────────────
+	// Reserve 3 rows at the bottom for legend + hint + gap so boxes never
+	// bleed into those rows.
+	availH := r.H - 3
+
 	sel := state.Selection[model.TabHeatmap]
 	if sel >= len(state.Nodes) {
 		sel = 0
@@ -141,7 +145,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		scroll = selBoxRow
 	}
 	for scroll < selBoxRow {
-		if boxRowY[selBoxRow]-boxRowY[scroll]+boxRowH[selBoxRow]+2 <= r.H {
+		if boxRowY[selBoxRow]-boxRowY[scroll]+boxRowH[selBoxRow]+2 <= availH {
 			break
 		}
 		scroll++
@@ -159,7 +163,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			y += boxRowH[curBoxRow] + 2
 			curBoxRow++
 		}
-		if y >= r.Y+r.H {
+		if y >= r.Y+availH {
 			break
 		}
 

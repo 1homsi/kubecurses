@@ -6,7 +6,7 @@ import (
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
-const keybindingHint = " q:Quit  Tab:Next  /:Search  r:Refresh  j/k:↑↓  PgDn/PgUp:Scroll"
+const keybindingHint = " q:Quit  Tab:Next  /:Search  r:Refresh  h/j/k/l:navigate"
 
 // DrawStatusBar renders the status bar at the bottom of the screen.
 // When search mode is active it renders a search input bar instead.
