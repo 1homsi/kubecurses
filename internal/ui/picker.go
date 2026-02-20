@@ -234,15 +234,11 @@ func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
 		h = 2 * numTaper
 	}
 
-	// Top taper: rows 0 … numTaper-1.
-	// Every taper row gets dashes so each is a visible horizontal line.
+	// Top taper: rows 0 … numTaper-1 — only diagonal chars, no fill dashes.
 	for k := 0; k < numTaper; k++ {
 		indent := (numTaper - 1 - k) * step
 		row := y + k
 		s.DrawText(x+indent, row, style, "╱")
-		for i := indent + 1; i < w-indent-1; i++ {
-			s.DrawText(x+i, row, style, "─")
-		}
 		s.DrawText(x+w-indent-1, row, style, "╲")
 	}
 
@@ -252,14 +248,11 @@ func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
 		s.DrawText(x+w-1, y+i, style, "│")
 	}
 
-	// Bottom taper: mirror of top.
+	// Bottom taper: mirror of top — only diagonal chars, no fill dashes.
 	for k := 0; k < numTaper; k++ {
 		indent := k * step
 		row := y + h - numTaper + k
 		s.DrawText(x+indent, row, style, "╲")
-		for i := indent + 1; i < w-indent-1; i++ {
-			s.DrawText(x+i, row, style, "─")
-		}
 		s.DrawText(x+w-indent-1, row, style, "╱")
 	}
 }

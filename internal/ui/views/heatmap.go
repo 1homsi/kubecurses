@@ -240,14 +240,9 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		curBoxRow++
 	}
 
-	// ── legend ────────────────────────────────────────────────────────────────
+	// ── legend — always pinned to the bottom of the viewport ─────────────────
 	legendY := r.Y + r.H - 2
-	if ly := y + 1; ly < legendY {
-		legendY = ly
-	}
-	if legendY >= r.Y && legendY < r.Y+r.H-1 {
-		drawHeatmapLegend(s, r.X+2, legendY, r.W-4, state.NoIcons)
-	}
+	drawHeatmapLegend(s, r.X+2, legendY, r.W-4, state.NoIcons)
 	drawHeatmapHint(s, r.X+2, r.Y+r.H-1, r.W-4)
 }
 
