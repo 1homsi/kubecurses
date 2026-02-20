@@ -178,6 +178,54 @@ func HeatmapRowColToNode(row, col, cols int) int {
 
 // ── Symmetric hex-cluster plan helpers ────────────────────────────────────────
 
+// HeatmapPlanRowsMin is like HeatmapPlanRows but enforces a minimum row width
+// of minA. No row in the returned plan will have fewer than minA entries.
+func HeatmapPlanRowsMin(n, maxCols, minA int) []int {
+	if n <= 0 {
+		return nil
+	}
+	if maxCols < 1 {
+		maxCols = 1
+	}
+	if minA < 1 {
+		minA = 1
+	}
+	if minA > maxCols {
+		minA = maxCols
+	}
+
+	bestWaste := -1
+	bestRows := -1
+	bestA, bestC := minA, minA
+	for c := minA; c <= maxCols; c++ {
+		for a := c; a >= minA; a-- { // never go below minA
+			cap := heatmapHexCap(a, c)
+			if cap >= n {
+				waste := cap - n
+				rows := 2*(c-a) + 1
+				if bestWaste < 0 || waste < bestWaste || (waste == bestWaste && rows < bestRows) {
+					bestWaste = waste
+					bestRows = rows
+					bestA, bestC = a, c
+				}
+				break
+			}
+		}
+		if bestWaste == 0 && bestRows == 1 {
+			break
+		}
+	}
+
+	if bestWaste >= 0 {
+		return heatmapBuildPlan(bestA, bestC, 0)
+	}
+
+	// n exceeds capacity — extend center with extra full-width rows.
+	pureCap := heatmapHexCap(minA, maxCols)
+	extra := (n - pureCap + maxCols - 1) / maxCols
+	return heatmapBuildPlan(minA, maxCols, extra)
+}
+
 // HeatmapPlanRows returns a symmetric hex-cluster row plan for n nodes.
 // The plan is a slice of per-row node counts [a, a+1, …, c, …, a+1, a] that
 // forms a hexagonal-cluster silhouette. The widest row is at most maxCols.

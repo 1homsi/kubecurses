@@ -217,7 +217,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			if maxPerRow < 4 {
 				maxPerRow = 4
 			}
-			podPlan := model.HeatmapPlanRows(len(pods), maxPerRow)
+			podPlan := model.HeatmapPlanRowsMin(len(pods), maxPerRow, 4)
 			pIdx := 0
 			for hexRow, rowCells := range podPlan {
 				if pIdx >= len(pods) {
@@ -261,7 +261,7 @@ func heatmapPodRows(nPods, gridW int) int {
 	if maxPerRow < 4 {
 		maxPerRow = 4
 	}
-	return len(model.HeatmapPlanRows(nPods, maxPerRow))
+	return len(model.HeatmapPlanRowsMin(nPods, maxPerRow, 4))
 }
 
 // heatmapPodStyle returns the tcell style for a pod hex cell.
