@@ -31,6 +31,7 @@ const (
 	ActionLogsToggleScroll  // 's' — toggle autoscroll in logs view
 	ActionSwitchCluster     // 'c' — open the cluster/context picker
 	ActionConfirm           // Enter — confirm selection in overlays
+	ActionTab5              // '5' — jump to Heatmap tab
 )
 
 // EventToAction converts a tcell event into a logical Action for normal mode.
@@ -100,6 +101,8 @@ func EventToAction(ev tcell.Event) Action {
 		return ActionTab3
 	case '4':
 		return ActionTab4
+	case '5':
+		return ActionTab5
 	}
 
 	return ActionNone

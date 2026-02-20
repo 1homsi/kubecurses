@@ -201,6 +201,12 @@ func drawBox(s *Screen, x, y, w, h int) {
 	}
 }
 
+// DrawBorderOnly draws only the rounded-corner box border using the given style.
+// The interior is not touched — callers fill it themselves.
+func DrawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {
+	drawBorderOnly(s, x, y, w, h, style)
+}
+
 // drawBorderOnly draws only the rounded-corner box border using the given style.
 // The interior is not touched — callers fill it themselves.
 func drawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {

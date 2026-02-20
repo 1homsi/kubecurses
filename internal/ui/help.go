@@ -26,7 +26,7 @@ var helpLines = []helpLine{
 	{key: "", desc: ""},
 	{key: "", desc: "Tabs"},
 	{key: "Tab / Shift+Tab", desc: "Next / previous tab"},
-	{key: "1  2  3  4", desc: "Jump to tab directly"},
+	{key: "1  2  3  4  5", desc: "Jump to tab directly"},
 	{key: "", desc: ""},
 	{key: "", desc: "Actions"},
 	{key: "l", desc: "Stream logs for selected pod"},

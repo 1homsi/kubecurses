@@ -4,8 +4,9 @@ package model
 type Tab int
 
 const (
-	TabNodeOverview Tab = iota // nodes with pods grouped — the main view
-	TabPods                    // flat pod list
+	TabHeatmap      Tab = iota // per-node honeycomb grid — first tab
+	TabNodeOverview            // nodes with pods grouped
+	TabPods                    // flat pod list (Xray)
 	TabDeployments
 	TabNamespaces
 	tabCount // sentinel — keep last
@@ -13,6 +14,7 @@ const (
 
 // TabNames maps Tab constants to display strings.
 var TabNames = [tabCount]string{
+	TabHeatmap:      "Heatmap",
 	TabNodeOverview: "Overview",
 	TabPods:         "Xray",
 	TabDeployments:  "Deployments",
@@ -24,6 +26,7 @@ var TabNames = [tabCount]string{
 type AppState struct {
 	ActiveTab   Tab
 	Selection   [tabCount]int // selected row per tab
+	NoIcons     bool          // when true, views use text fallbacks instead of icons
 	Pods        []Pod
 	Nodes       []Node
 	Namespaces  []Namespace
@@ -49,6 +52,14 @@ type AppState struct {
 	ClusterPickerList []string
 	ClusterPickerSel  int
 	ClusterPickerCurr string // currently connected context
+
+	// Heatmap navigation state.
+	NodesLoaded       bool   // true once the first nodes update has been received
+	HeatmapCols       int    // grid column count — written by HeatmapView.Draw each frame
+	HeatmapScroll     int    // first visible box-row index
+	HeatmapNodeDetail bool   // true = node-detail overlay is active
+	HeatmapDetailNode string // name of the node being detailed
+	HeatmapDetailSel  int    // selected pod index within the node-detail view
 }
 
 // ApplyUpdate merges an incoming watcher update into state.
@@ -64,6 +75,8 @@ func (s *AppState) ApplyUpdate(u Update) {
 		s.clampSelection(TabPods, len(s.Pods))
 	case UpdateNodes:
 		s.Nodes = u.Nodes
+		s.NodesLoaded = true
+		s.clampSelection(TabHeatmap, len(s.Nodes))
 		// TabNodeOverview rows = nodes + their pods; clamped by activeLen in app
 	case UpdateNamespaces:
 		s.Namespaces = u.Namespaces

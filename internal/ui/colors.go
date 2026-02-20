@@ -166,4 +166,32 @@ var (
 	StyleXrayConnector = tcell.StyleDefault.
 				Foreground(tcell.NewRGBColor(55, 60, 85)).
 				Background(colorBg)
+
+	// Heatmap pod cells — fg color is applied to the ⬡ hexagon character.
+	StyleHeatmapRunning = tcell.StyleDefault.
+				Foreground(colorGreen).
+				Background(colorBg)
+
+	StyleHeatmapPending = tcell.StyleDefault.
+				Foreground(colorAmber).
+				Background(colorBg)
+
+	StyleHeatmapFailed = tcell.StyleDefault.
+				Foreground(colorRed).
+				Background(colorBg).
+				Bold(true)
+
+	StyleHeatmapTerm = tcell.StyleDefault.
+				Foreground(colorDim).
+				Background(colorBg)
+
+	StyleHeatmapDefault = tcell.StyleDefault.
+				Foreground(colorBlue).
+				Background(colorBg)
+
+	// Selected node box — golden border so the active node stands out.
+	StyleHeatmapNodeSel = tcell.StyleDefault.
+				Foreground(tcell.NewRGBColor(255, 220, 50)).
+				Background(colorBg).
+				Bold(true)
 )

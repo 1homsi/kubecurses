@@ -6,11 +6,50 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/1homsi/kubecurses/internal/model"
 )
+
+// convertNode converts a corev1.Node to a model.Node using the given time as "now".
+func convertNode(n corev1.Node, now time.Time) model.Node {
+	status := "NotReady"
+	for _, c := range n.Status.Conditions {
+		if c.Type == "Ready" && c.Status == "True" {
+			status = "Ready"
+			break
+		}
+	}
+
+	var roles []string
+	for label := range n.Labels {
+		if strings.HasPrefix(label, "node-role.kubernetes.io/") {
+			role := strings.TrimPrefix(label, "node-role.kubernetes.io/")
+			roles = append(roles, role)
+		}
+	}
+	rolesStr := strings.Join(roles, ",")
+	if rolesStr == "" {
+		rolesStr = "<none>"
+	}
+
+	cpuQ := n.Status.Allocatable["cpu"]
+	memQ := n.Status.Allocatable["memory"]
+	podsQ := n.Status.Allocatable["pods"]
+
+	return model.Node{
+		Name:       n.Name,
+		Status:     status,
+		Roles:      rolesStr,
+		Age:        now.Sub(n.CreationTimestamp.Time).Truncate(time.Second),
+		Version:    n.Status.NodeInfo.KubeletVersion,
+		AllocCPUm:  cpuQ.MilliValue(),
+		AllocMemMi: memQ.Value() / (1024 * 1024),
+		AllocPods:  int(podsQ.Value()),
+	}
+}
 
 // FetchNodes lists all nodes in the cluster and populates allocatable resources.
 func FetchNodes(ctx context.Context, cs *kubernetes.Clientset) ([]model.Node, error) {
@@ -22,41 +61,7 @@ func FetchNodes(ctx context.Context, cs *kubernetes.Clientset) ([]model.Node, er
 	now := time.Now()
 	nodes := make([]model.Node, 0, len(list.Items))
 	for _, n := range list.Items {
-		status := "NotReady"
-		for _, c := range n.Status.Conditions {
-			if c.Type == "Ready" && c.Status == "True" {
-				status = "Ready"
-				break
-			}
-		}
-
-		var roles []string
-		for label := range n.Labels {
-			if strings.HasPrefix(label, "node-role.kubernetes.io/") {
-				role := strings.TrimPrefix(label, "node-role.kubernetes.io/")
-				roles = append(roles, role)
-			}
-		}
-		rolesStr := strings.Join(roles, ",")
-		if rolesStr == "" {
-			rolesStr = "<none>"
-		}
-
-		// Allocatable resources.
-		cpuQ := n.Status.Allocatable["cpu"]
-		memQ := n.Status.Allocatable["memory"]
-		podsQ := n.Status.Allocatable["pods"]
-
-		nodes = append(nodes, model.Node{
-			Name:       n.Name,
-			Status:     status,
-			Roles:      rolesStr,
-			Age:        now.Sub(n.CreationTimestamp.Time).Truncate(time.Second),
-			Version:    n.Status.NodeInfo.KubeletVersion,
-			AllocCPUm:  cpuQ.MilliValue(),
-			AllocMemMi: memQ.Value() / (1024 * 1024),
-			AllocPods:  int(podsQ.Value()),
-		})
+		nodes = append(nodes, convertNode(n, now))
 	}
 	return nodes, nil
 }

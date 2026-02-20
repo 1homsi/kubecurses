@@ -19,8 +19,20 @@ func Execute(version, commit, buildDate string) {
 	flag.StringVar(&cfg.Kubeconfig, "kubeconfig", "", "path to kubeconfig file (default: $KUBECONFIG or ~/.kube/config)")
 	flag.StringVar(&cfg.Context, "context", "", "kubernetes context to use")
 	flag.StringVar(&cfg.Namespace, "namespace", "", "namespace to filter (default: all namespaces)")
-	flag.DurationVar(&cfg.PollInterval, "interval", 10*time.Second, "polling interval for resource refresh")
+	flag.DurationVar(&cfg.PollInterval, "interval", 10*time.Second, "polling interval for resource refresh (used when --watch=false)")
+	flag.BoolVar(&cfg.Watch, "watch", true, "use informer-based live updates instead of polling")
+	flag.DurationVar(&cfg.MetricsInterval, "metrics-interval", 30*time.Second, "how often to refresh metrics-server data")
+	flag.DurationVar(&cfg.RequestTimeout, "request-timeout", 30*time.Second, "timeout for Kubernetes API requests")
+	var kubeAPIQPS float64 = 20
+	flag.Float64Var(&kubeAPIQPS, "kube-api-qps", 20, "maximum QPS to the Kubernetes API server")
+	flag.IntVar(&cfg.KubeAPIBurst, "kube-api-burst", 40, "maximum burst for throttle to the Kubernetes API server")
+	flag.BoolVar(&cfg.DisableMetrics, "disable-metrics", false, "disable metrics-server integration")
+	flag.IntVar(&cfg.MaxPods, "max-pods", 0, "maximum number of pods to display (0 = unlimited)")
+	flag.BoolVar(&cfg.NoIcons, "no-icons", false, "replace icons with plain-text fallbacks")
+	flag.Int64Var(&cfg.LogTailLines, "log-lines", 200, "number of log lines to tail when opening pod logs")
 	flag.Parse()
+
+	cfg.KubeAPIQPS = float32(kubeAPIQPS)
 
 	if *showVersion {
 		fmt.Printf("kubecurses %s\ncommit:    %s\nbuilt:     %s\n", version, commit, buildDate)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -26,18 +25,19 @@ const maxLogLines = 5000
 
 // App is the top-level application struct.
 type App struct {
-	cfg           Config
-	screen        *ui.Screen
-	state         model.AppState
-	watcher       *k8s.Watcher
-	watcherCancel context.CancelFunc // cancels only the watcher goroutines (not Run itself)
-	runCtx        context.Context    // Run()'s context, used when restarting the watcher
-	views         [4]views.View
-	nodeOverview  rowCounter      // kept for RowCount access; swap impl to change overview style
-	xrayView      *views.XrayView // typed for SelectedRef access
-	events        chan tcell.Event // fed by a single long-lived goroutine
-	logLines      chan string      // fed by the active log-streaming goroutine; nil when inactive
-	logsCancel    context.CancelFunc
+	cfg            Config
+	screen         *ui.Screen
+	state          model.AppState
+	watcher        *k8s.Watcher
+	watcherCancel  context.CancelFunc // cancels only the watcher goroutines (not Run itself)
+	runCtx         context.Context    // Run()'s context, used when restarting the watcher
+	views          [5]views.View
+	nodeOverview   rowCounter           // kept for RowCount access; swap impl to change overview style
+	xrayView       *views.XrayView      // typed for SelectedRef access
+	nodeDetailView *views.NodeDetailView // heatmap node drill-down
+	events         chan tcell.Event      // fed by a single long-lived goroutine
+	logLines       chan string           // fed by the active log-streaming goroutine; nil when inactive
+	logsCancel     context.CancelFunc
 }
 
 // New creates and initialises a new App from the given Config.
@@ -61,32 +61,49 @@ func New(cfg Config) (*App, error) {
 		}
 	}
 
-	cs, err := k8s.NewClient(cfg.Kubeconfig, cfg.Context)
+	cs, err := k8s.NewClient(k8s.ClientOptions{
+		KubeconfigPath: cfg.Kubeconfig,
+		ContextName:    cfg.Context,
+		RequestTimeout: cfg.RequestTimeout,
+		QPS:            cfg.KubeAPIQPS,
+		Burst:          cfg.KubeAPIBurst,
+	})
 	if err != nil {
 		scr.Fini()
 		return nil, fmt.Errorf("kubernetes client: %w", err)
 	}
 
-	watcher := k8s.NewWatcher(cs, cfg.Namespace)
+	watcherOpts := k8s.WatcherOptions{
+		Watch:           cfg.Watch,
+		PollInterval:    cfg.PollInterval,
+		MetricsInterval: cfg.MetricsInterval,
+		DisableMetrics:  cfg.DisableMetrics,
+		MaxPods:         cfg.MaxPods,
+	}
+	watcher := k8s.NewWatcher(cs, cfg.Namespace, watcherOpts)
 	ov := &views.NodeOverviewView{}
 	xv := &views.XrayView{}
+	ndv := &views.NodeDetailView{}
 
 	app := &App{
-		cfg:          cfg,
-		screen:       scr,
-		watcher:      watcher,
-		nodeOverview: ov,
-		xrayView:     xv,
+		cfg:            cfg,
+		screen:         scr,
+		watcher:        watcher,
+		nodeOverview:   ov,
+		xrayView:       xv,
+		nodeDetailView: ndv,
 		state: model.AppState{
 			Namespace:      cfg.Namespace,
 			Context:        cfg.Context,
 			LogsAutoScroll: true,
+			NoIcons:        cfg.NoIcons,
 		},
-		views: [4]views.View{
+		views: [5]views.View{
 			model.TabNodeOverview: ov,
 			model.TabPods:         xv,
 			model.TabDeployments:  &views.DeploymentsView{},
 			model.TabNamespaces:   &views.NamespacesView{},
+			model.TabHeatmap:      &views.HeatmapView{},
 		},
 	}
 	return app, nil
@@ -105,10 +122,7 @@ func (a *App) Run(ctx context.Context) error {
 	// restarted independently when the user switches clusters.
 	watcherCtx, watcherCancel := context.WithCancel(ctx)
 	a.watcherCancel = watcherCancel
-	a.watcher.Start(watcherCtx, a.cfg.PollInterval)
-
-	ticker := time.NewTicker(a.cfg.PollInterval)
-	defer ticker.Stop()
+	a.watcher.Start(watcherCtx)
 
 	// Single persistent goroutine feeds all tcell events onto a.events.
 	// This avoids goroutine accumulation / PollEvent deadlock on tab resume.
@@ -138,9 +152,6 @@ func (a *App) Run(ctx context.Context) error {
 		case update := <-a.watcher.Updates():
 			a.state.ApplyUpdate(update)
 			a.draw()
-
-		case <-ticker.C:
-			a.watcher.TriggerRefresh()
 
 		case line := <-a.logLines:
 			// Append incoming log line; cap buffer to avoid unbounded growth.
@@ -207,6 +218,13 @@ func (a *App) handleMouseEvent(ev *tcell.EventMouse) bool {
 			if a.state.ClusterPickerSel > 0 {
 				a.state.ClusterPickerSel--
 			}
+		case a.state.HeatmapNodeDetail:
+			if a.state.HeatmapDetailSel > 0 {
+				a.state.HeatmapDetailSel -= 3
+				if a.state.HeatmapDetailSel < 0 {
+					a.state.HeatmapDetailSel = 0
+				}
+			}
 		default:
 			a.state.MoveSelection(-3, a.activeLen())
 		}
@@ -217,6 +235,12 @@ func (a *App) handleMouseEvent(ev *tcell.EventMouse) bool {
 		case a.state.ClusterPickerMode:
 			if a.state.ClusterPickerSel < len(a.state.ClusterPickerList)-1 {
 				a.state.ClusterPickerSel++
+			}
+		case a.state.HeatmapNodeDetail:
+			n := a.heatmapDetailPodCount()
+			a.state.HeatmapDetailSel += 3
+			if a.state.HeatmapDetailSel >= n {
+				a.state.HeatmapDetailSel = n - 1
 			}
 		default:
 			a.state.MoveSelection(3, a.activeLen())
@@ -321,16 +345,29 @@ func (a *App) switchCluster(newContext string) {
 		a.watcherCancel()
 	}
 	// Build a new client for the chosen context.
-	cs, err := k8s.NewClient(a.cfg.Kubeconfig, newContext)
+	cs, err := k8s.NewClient(k8s.ClientOptions{
+		KubeconfigPath: a.cfg.Kubeconfig,
+		ContextName:    newContext,
+		RequestTimeout: a.cfg.RequestTimeout,
+		QPS:            a.cfg.KubeAPIQPS,
+		Burst:          a.cfg.KubeAPIBurst,
+	})
 	if err != nil {
 		a.state.LastErr = fmt.Errorf("switch cluster: %w", err)
 		return
 	}
 	// Swap the watcher.
-	a.watcher = k8s.NewWatcher(cs, a.cfg.Namespace)
+	watcherOpts := k8s.WatcherOptions{
+		Watch:           a.cfg.Watch,
+		PollInterval:    a.cfg.PollInterval,
+		MetricsInterval: a.cfg.MetricsInterval,
+		DisableMetrics:  a.cfg.DisableMetrics,
+		MaxPods:         a.cfg.MaxPods,
+	}
+	a.watcher = k8s.NewWatcher(cs, a.cfg.Namespace, watcherOpts)
 	watcherCtx, watcherCancel := context.WithCancel(a.runCtx)
 	a.watcherCancel = watcherCancel
-	a.watcher.Start(watcherCtx, a.cfg.PollInterval)
+	a.watcher.Start(watcherCtx)
 	// Update config and visible state; clear stale data.
 	a.cfg.Context = newContext
 	a.state.Context = newContext
@@ -364,7 +401,7 @@ func (a *App) openLogs(ns, pod, container string) {
 
 	cs := a.watcher.Clientset()
 	ch := a.logLines
-	go k8s.StreamLogs(logCtx, cs, ns, pod, container, ch)
+	go k8s.StreamLogs(logCtx, cs, ns, pod, container, a.cfg.LogTailLines, ch)
 }
 
 // closeLogs stops the active log stream and hides the logs view.
@@ -404,44 +441,144 @@ func (a *App) applySearchAction(action ui.Action, ev tcell.Event) bool {
 // applyAction mutates app state based on the given action.
 // Returns true if the application should quit.
 func (a *App) applyAction(action ui.Action) bool {
+	onHeatmap := a.state.ActiveTab == model.TabHeatmap
+	inDetail := a.state.HeatmapNodeDetail
+
 	switch action {
 	case ui.ActionQuit:
 		return true
+
 	case ui.ActionNextTab:
+		a.state.HeatmapNodeDetail = false
 		a.state.NextTab()
 	case ui.ActionPrevTab:
+		a.state.HeatmapNodeDetail = false
 		a.state.PrevTab()
 	case ui.ActionTab1:
-		a.state.SetTab(model.TabNodeOverview)
+		a.state.HeatmapNodeDetail = false
+		a.state.SetTab(model.TabHeatmap)
 	case ui.ActionTab2:
-		a.state.SetTab(model.TabPods)
+		a.state.HeatmapNodeDetail = false
+		a.state.SetTab(model.TabNodeOverview)
 	case ui.ActionTab3:
-		a.state.SetTab(model.TabDeployments)
+		a.state.HeatmapNodeDetail = false
+		a.state.SetTab(model.TabPods)
 	case ui.ActionTab4:
+		a.state.HeatmapNodeDetail = false
+		a.state.SetTab(model.TabDeployments)
+	case ui.ActionTab5:
+		a.state.HeatmapNodeDetail = false
 		a.state.SetTab(model.TabNamespaces)
+
 	case ui.ActionMoveUp:
-		a.state.MoveSelection(a.upDelta(), a.activeLen())
+		if onHeatmap && !inDetail {
+			a.heatmapMoveUp()
+		} else if inDetail {
+			if a.state.HeatmapDetailSel > 0 {
+				a.state.HeatmapDetailSel--
+			}
+		} else {
+			a.state.MoveSelection(a.upDelta(), a.activeLen())
+		}
+
 	case ui.ActionMoveDown:
-		a.state.MoveSelection(a.downDelta(), a.activeLen())
-	case ui.ActionMoveLeft:
-		a.gridMoveHorizontal(-1)
-	case ui.ActionMoveRight:
-		a.gridMoveHorizontal(1)
+		if onHeatmap && !inDetail {
+			a.heatmapMoveDown()
+		} else if inDetail {
+			if a.state.HeatmapDetailSel < a.heatmapDetailPodCount()-1 {
+				a.state.HeatmapDetailSel++
+			}
+		} else {
+			a.state.MoveSelection(a.downDelta(), a.activeLen())
+		}
+
+	case ui.ActionMoveLeft: // 'h'
+		if onHeatmap && !inDetail {
+			a.heatmapMoveLeft()
+		} else {
+			a.gridMoveHorizontal(-1)
+		}
+
+	case ui.ActionMoveRight: // right-arrow
+		if onHeatmap && !inDetail {
+			a.heatmapMoveRight()
+		} else {
+			a.gridMoveHorizontal(1)
+		}
+
 	case ui.ActionPageUp:
-		a.state.MoveSelection(-4, a.activeLen())
+		if onHeatmap && !inDetail {
+			cols := a.state.HeatmapCols
+			if cols < 1 {
+				cols = 1
+			}
+			a.state.MoveSelection(-cols*3, len(a.state.Nodes))
+		} else if inDetail {
+			a.state.HeatmapDetailSel -= 10
+			if a.state.HeatmapDetailSel < 0 {
+				a.state.HeatmapDetailSel = 0
+			}
+		} else {
+			a.state.MoveSelection(-4, a.activeLen())
+		}
+
 	case ui.ActionPageDown:
-		a.state.MoveSelection(4, a.activeLen())
+		if onHeatmap && !inDetail {
+			cols := a.state.HeatmapCols
+			if cols < 1 {
+				cols = 1
+			}
+			a.state.MoveSelection(cols*3, len(a.state.Nodes))
+		} else if inDetail {
+			n := a.heatmapDetailPodCount()
+			a.state.HeatmapDetailSel += 10
+			if a.state.HeatmapDetailSel >= n {
+				a.state.HeatmapDetailSel = n - 1
+			}
+		} else {
+			a.state.MoveSelection(4, a.activeLen())
+		}
+
+	case ui.ActionConfirm: // Enter
+		if onHeatmap && !inDetail {
+			// Drill into the selected node.
+			if sel := a.state.Selection[model.TabHeatmap]; sel < len(a.state.Nodes) {
+				a.state.HeatmapDetailNode = a.state.Nodes[sel].Name
+				a.state.HeatmapDetailSel = 0
+				a.state.HeatmapNodeDetail = true
+			}
+		}
+
+	case ui.ActionSearchCancel: // Esc
+		if inDetail {
+			a.state.HeatmapNodeDetail = false
+		} else {
+			a.state.SearchQuery = ""
+		}
+
 	case ui.ActionRefresh:
 		a.watcher.TriggerRefresh()
+
 	case ui.ActionSearchOpen:
-		a.state.SearchMode = true
-		a.state.SearchQuery = ""
-	case ui.ActionSearchCancel:
-		a.state.SearchQuery = ""
+		if !onHeatmap {
+			a.state.SearchMode = true
+			a.state.SearchQuery = ""
+		}
+
 	case ui.ActionHelp:
 		a.state.HelpMode = true
-	case ui.ActionLogsOpen:
-		a.handleLogsOpen()
+
+	case ui.ActionLogsOpen: // 'l'
+		if onHeatmap && !inDetail {
+			// l = move right within the heatmap grid
+			a.heatmapMoveRight()
+		} else if inDetail {
+			// l = open logs for the selected pod in the detail view
+			a.handleLogsOpenForDetail()
+		} else {
+			a.handleLogsOpen()
+		}
+
 	case ui.ActionSwitchCluster:
 		a.handleClusterPickerOpen()
 	}
@@ -482,8 +619,7 @@ func (a *App) upDelta() int   { return -1 }
 func (a *App) downDelta() int { return 1 }
 
 // gridMoveHorizontal moves the selected node card left (dir=-1) or right
-// (dir=+1) within the 2-column grid. Ignores movement that would wrap across
-// row boundaries.
+// (dir=+1) within the 2-column NodeOverview grid.
 func (a *App) gridMoveHorizontal(dir int) {
 	if a.state.ActiveTab != model.TabNodeOverview {
 		return
@@ -499,6 +635,58 @@ func (a *App) gridMoveHorizontal(dir int) {
 	a.state.MoveSelection(dir, a.activeLen())
 }
 
+// heatmapCols returns the number of grid columns currently used by the heatmap.
+func (a *App) heatmapCols() int {
+	if c := a.state.HeatmapCols; c > 0 {
+		return c
+	}
+	return 1
+}
+
+// heatmapMoveUp moves the heatmap selection up by one grid row (cols nodes).
+func (a *App) heatmapMoveUp() {
+	a.state.MoveSelection(-a.heatmapCols(), len(a.state.Nodes))
+}
+
+// heatmapMoveDown moves the heatmap selection down by one grid row (cols nodes).
+func (a *App) heatmapMoveDown() {
+	a.state.MoveSelection(a.heatmapCols(), len(a.state.Nodes))
+}
+
+// heatmapMoveLeft moves the heatmap selection left by one cell within its row.
+func (a *App) heatmapMoveLeft() {
+	if len(a.state.Nodes) == 0 {
+		return
+	}
+	sel := a.state.Selection[model.TabHeatmap]
+	cols := a.heatmapCols()
+	if sel%cols > 0 {
+		a.state.Selection[model.TabHeatmap]--
+	}
+}
+
+// heatmapMoveRight moves the heatmap selection right by one cell within its row.
+func (a *App) heatmapMoveRight() {
+	if len(a.state.Nodes) == 0 {
+		return
+	}
+	sel := a.state.Selection[model.TabHeatmap]
+	cols := a.heatmapCols()
+	next := sel + 1
+	if next < len(a.state.Nodes) && next%cols != 0 {
+		a.state.Selection[model.TabHeatmap] = next
+	}
+}
+
+// handleLogsOpenForDetail opens logs for the selected pod in the node-detail view.
+func (a *App) handleLogsOpenForDetail() {
+	pods := views.NodeDetailPods(&a.state)
+	if a.state.HeatmapDetailSel < len(pods) {
+		p := pods[a.state.HeatmapDetailSel]
+		a.openLogs(p.Namespace, p.Name, "")
+	}
+}
+
 // activeLen returns the number of navigable rows in the currently active view.
 func (a *App) activeLen() int {
 	switch a.state.ActiveTab {
@@ -510,8 +698,24 @@ func (a *App) activeLen() int {
 		return len(a.state.Namespaces)
 	case model.TabDeployments:
 		return len(a.state.Deployments)
+	case model.TabHeatmap:
+		if a.state.HeatmapNodeDetail {
+			return a.heatmapDetailPodCount()
+		}
+		return len(a.state.Nodes)
 	}
 	return 0
+}
+
+// heatmapDetailPodCount returns the number of pods on the node being detailed.
+func (a *App) heatmapDetailPodCount() int {
+	count := 0
+	for _, p := range a.state.Pods {
+		if p.Node == a.state.HeatmapDetailNode {
+			count++
+		}
+	}
+	return count
 }
 
 // draw renders the entire screen.
@@ -520,9 +724,12 @@ func (a *App) draw() {
 	a.screen.Clear()
 	ui.DrawTabBar(a.screen, w, a.state.ActiveTab, &a.state)
 	contentRect := ui.ContentRect(w, h)
-	if a.state.LogsMode {
+	switch {
+	case a.state.LogsMode:
 		ui.DrawLogsView(a.screen, contentRect, &a.state)
-	} else {
+	case a.state.HeatmapNodeDetail:
+		a.nodeDetailView.Draw(a.screen, contentRect, &a.state)
+	default:
 		a.views[a.state.ActiveTab].Draw(a.screen, contentRect, &a.state)
 	}
 	ui.DrawStatusBar(a.screen, w, h, &a.state)

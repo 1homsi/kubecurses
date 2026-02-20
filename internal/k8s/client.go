@@ -3,23 +3,33 @@ package k8s
 
 import (
 	"fmt"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// NewClient builds a *kubernetes.Clientset from the given kubeconfig path and
-// optional context override. If kubeconfigPath is empty, the default discovery
-// order (KUBECONFIG env var → ~/.kube/config) is used.
-func NewClient(kubeconfigPath, contextName string) (*kubernetes.Clientset, error) {
+// ClientOptions configures the Kubernetes REST client.
+type ClientOptions struct {
+	KubeconfigPath string
+	ContextName    string
+	RequestTimeout time.Duration // 0 = no timeout
+	QPS            float32       // 0 = use client-go default
+	Burst          int           // 0 = use client-go default
+}
+
+// NewClient builds a *kubernetes.Clientset from the given options.
+// If KubeconfigPath is empty, the default discovery order
+// (KUBECONFIG env var → ~/.kube/config) is used.
+func NewClient(opts ClientOptions) (*kubernetes.Clientset, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfigPath != "" {
-		loadingRules.ExplicitPath = kubeconfigPath
+	if opts.KubeconfigPath != "" {
+		loadingRules.ExplicitPath = opts.KubeconfigPath
 	}
 
 	overrides := &clientcmd.ConfigOverrides{}
-	if contextName != "" {
-		overrides.CurrentContext = contextName
+	if opts.ContextName != "" {
+		overrides.CurrentContext = opts.ContextName
 	}
 
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
@@ -28,6 +38,16 @@ func NewClient(kubeconfigPath, contextName string) (*kubernetes.Clientset, error
 	).ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("build kubeconfig: %w", err)
+	}
+
+	if opts.RequestTimeout > 0 {
+		config.Timeout = opts.RequestTimeout
+	}
+	if opts.QPS > 0 {
+		config.QPS = opts.QPS
+	}
+	if opts.Burst > 0 {
+		config.Burst = opts.Burst
 	}
 
 	cs, err := kubernetes.NewForConfig(config)

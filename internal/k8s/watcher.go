@@ -4,27 +4,42 @@ import (
 	"context"
 	"time"
 
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
 const updateChanCap = 32
 
-// Watcher runs background goroutines that periodically fetch Kubernetes
-// resources and send model.Update values on a shared channel.
+// WatcherOptions controls how the Watcher fetches and delivers updates.
+type WatcherOptions struct {
+	Watch           bool          // true = informer mode, false = polling
+	PollInterval    time.Duration // used in polling mode
+	MetricsInterval time.Duration // how often to refresh metrics (informer mode)
+	DisableMetrics  bool          // skip metrics-server calls entirely
+	MaxPods         int           // cap pod list (0 = unlimited)
+}
+
+// Watcher runs background goroutines that fetch Kubernetes resources and send
+// model.Update values on a shared channel. Supports both informer-based Watch
+// mode and periodic polling mode.
 type Watcher struct {
 	cs        *kubernetes.Clientset
 	namespace string
+	opts      WatcherOptions
 	updates   chan model.Update
 	refresh   chan struct{}
 }
 
-// NewWatcher creates a Watcher. Call Start to begin polling.
-func NewWatcher(cs *kubernetes.Clientset, namespace string) *Watcher {
+// NewWatcher creates a Watcher. Call Start to begin.
+func NewWatcher(cs *kubernetes.Clientset, namespace string, opts WatcherOptions) *Watcher {
 	return &Watcher{
 		cs:        cs,
 		namespace: namespace,
+		opts:      opts,
 		updates:   make(chan model.Update, updateChanCap),
 		refresh:   make(chan struct{}, 1),
 	}
@@ -40,20 +55,242 @@ func (w *Watcher) Clientset() *kubernetes.Clientset {
 	return w.cs
 }
 
-// TriggerRefresh signals all watcher goroutines to re-fetch immediately.
+// TriggerRefresh signals polling goroutines to re-fetch immediately.
+// In Watch mode this is a no-op.
 func (w *Watcher) TriggerRefresh() {
+	if w.opts.Watch {
+		return
+	}
 	select {
 	case w.refresh <- struct{}{}:
 	default:
 	}
 }
 
-// Start launches one goroutine per resource type.
-func (w *Watcher) Start(ctx context.Context, interval time.Duration) {
-	go w.watchPods(ctx, interval)
-	go w.watchNodes(ctx, interval)
-	go w.watchNamespaces(ctx, interval)
-	go w.watchDeployments(ctx, interval)
+// Start launches the background goroutines.
+func (w *Watcher) Start(ctx context.Context) {
+	if w.opts.Watch {
+		go w.startInformers(ctx)
+	} else {
+		w.startPolling(ctx)
+	}
+}
+
+// ── informer path ─────────────────────────────────────────────────────────────
+
+func (w *Watcher) startInformers(ctx context.Context) {
+	factory := informers.NewSharedInformerFactoryWithOptions(
+		w.cs,
+		10*time.Minute,
+		informers.WithNamespace(w.namespace),
+	)
+
+	// Register informers with the factory before starting it.
+	podInformer := factory.Core().V1().Pods()
+	nodeInformer := factory.Core().V1().Nodes()
+	nsInformer := factory.Core().V1().Namespaces()
+	depInformer := factory.Apps().V1().Deployments()
+
+	// Coalescing trigger channels (capacity 1 — drops redundant signals).
+	podCh := make(chan struct{}, 1)
+	nodeCh := make(chan struct{}, 1)
+	nsCh := make(chan struct{}, 1)
+	depCh := make(chan struct{}, 1)
+
+	trig := func(ch chan<- struct{}) {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+
+	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(_ interface{}) { trig(podCh) },
+		UpdateFunc: func(_, _ interface{}) { trig(podCh) },
+		DeleteFunc: func(_ interface{}) { trig(podCh) },
+	})
+	nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(_ interface{}) { trig(nodeCh) },
+		UpdateFunc: func(_, _ interface{}) { trig(nodeCh) },
+		DeleteFunc: func(_ interface{}) { trig(nodeCh) },
+	})
+	nsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(_ interface{}) { trig(nsCh) },
+		UpdateFunc: func(_, _ interface{}) { trig(nsCh) },
+		DeleteFunc: func(_ interface{}) { trig(nsCh) },
+	})
+	depInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(_ interface{}) { trig(depCh) },
+		UpdateFunc: func(_, _ interface{}) { trig(depCh) },
+		DeleteFunc: func(_ interface{}) { trig(depCh) },
+	})
+
+	factory.Start(ctx.Done())
+
+	// Block until all caches are populated before sending initial state.
+	cache.WaitForCacheSync(ctx.Done(),
+		podInformer.Informer().HasSynced,
+		nodeInformer.Informer().HasSynced,
+		nsInformer.Informer().HasSynced,
+		depInformer.Informer().HasSynced,
+	)
+
+	// Send initial state via factory's cached listers.
+	w.sendPodsFromFactory(ctx, factory)
+	w.sendNodesFromFactory(ctx, factory, nil)
+	w.sendNamespacesFromFactory(ctx, factory)
+	w.sendDeploymentsFromFactory(ctx, factory)
+
+	// Metrics goroutine — always polled even in Watch mode.
+	if !w.opts.DisableMetrics && w.opts.MetricsInterval > 0 {
+		go w.watchMetricsFactory(ctx, factory)
+	}
+
+	// Pod worker.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-podCh:
+				w.sendPodsFromFactory(ctx, factory)
+			}
+		}
+	}()
+
+	// Node worker.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-nodeCh:
+				w.sendNodesFromFactory(ctx, factory, nil)
+			}
+		}
+	}()
+
+	// Namespace worker.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-nsCh:
+				w.sendNamespacesFromFactory(ctx, factory)
+			}
+		}
+	}()
+
+	// Deployment worker.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-depCh:
+				w.sendDeploymentsFromFactory(ctx, factory)
+			}
+		}
+	}()
+}
+
+func (w *Watcher) sendPodsFromFactory(ctx context.Context, factory informers.SharedInformerFactory) {
+	items, err := factory.Core().V1().Pods().Lister().List(labels.Everything())
+	if err != nil {
+		w.send(ctx, model.Update{Kind: model.UpdatePods, Err: err})
+		return
+	}
+	now := time.Now()
+	pods := make([]model.Pod, 0, len(items))
+	for _, p := range items {
+		pods = append(pods, convertPod(*p, now))
+	}
+	if w.opts.MaxPods > 0 && len(pods) > w.opts.MaxPods {
+		pods = pods[:w.opts.MaxPods]
+	}
+	if reasons, rerr := FetchPendingReasons(ctx, w.cs); rerr == nil {
+		for i := range pods {
+			if pods[i].Status == "Pending" {
+				pods[i].PendingReason = reasons[pods[i].Name]
+			}
+		}
+	}
+	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
+}
+
+func (w *Watcher) sendNodesFromFactory(ctx context.Context, factory informers.SharedInformerFactory, metrics map[string]nodeMetrics) {
+	items, err := factory.Core().V1().Nodes().Lister().List(labels.Everything())
+	if err != nil {
+		w.send(ctx, model.Update{Kind: model.UpdateNodes, Err: err})
+		return
+	}
+	now := time.Now()
+	nodes := make([]model.Node, 0, len(items))
+	for _, n := range items {
+		nodes = append(nodes, convertNode(*n, now))
+	}
+	if metrics != nil {
+		for i := range nodes {
+			if m, ok := metrics[nodes[i].Name]; ok {
+				nodes[i].UsedCPUm = m.cpuM
+				nodes[i].UsedMemMi = m.memMi
+				nodes[i].MetricsOK = true
+			}
+		}
+	}
+	w.send(ctx, model.Update{Kind: model.UpdateNodes, Nodes: nodes})
+}
+
+func (w *Watcher) sendNamespacesFromFactory(ctx context.Context, factory informers.SharedInformerFactory) {
+	items, err := factory.Core().V1().Namespaces().Lister().List(labels.Everything())
+	if err != nil {
+		w.send(ctx, model.Update{Kind: model.UpdateNamespaces, Err: err})
+		return
+	}
+	now := time.Now()
+	nss := make([]model.Namespace, 0, len(items))
+	for _, ns := range items {
+		nss = append(nss, convertNamespace(*ns, now))
+	}
+	w.send(ctx, model.Update{Kind: model.UpdateNamespaces, Namespaces: nss})
+}
+
+func (w *Watcher) sendDeploymentsFromFactory(ctx context.Context, factory informers.SharedInformerFactory) {
+	items, err := factory.Apps().V1().Deployments().Lister().List(labels.Everything())
+	if err != nil {
+		w.send(ctx, model.Update{Kind: model.UpdateDeployments, Err: err})
+		return
+	}
+	now := time.Now()
+	deps := make([]model.Deployment, 0, len(items))
+	for _, d := range items {
+		deps = append(deps, convertDeployment(*d, now))
+	}
+	w.send(ctx, model.Update{Kind: model.UpdateDeployments, Deployments: deps})
+}
+
+func (w *Watcher) watchMetricsFactory(ctx context.Context, factory informers.SharedInformerFactory) {
+	ticker := time.NewTicker(w.opts.MetricsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			metrics, _ := FetchNodeMetrics(ctx, w.cs)
+			w.sendNodesFromFactory(ctx, factory, metrics)
+		}
+	}
+}
+
+// ── polling path ──────────────────────────────────────────────────────────────
+
+func (w *Watcher) startPolling(ctx context.Context) {
+	go w.watchPods(ctx)
+	go w.watchNodes(ctx)
+	go w.watchNamespaces(ctx)
+	go w.watchDeployments(ctx)
 }
 
 func (w *Watcher) send(ctx context.Context, u model.Update) {
@@ -63,8 +300,8 @@ func (w *Watcher) send(ctx context.Context, u model.Update) {
 	}
 }
 
-func (w *Watcher) watchPods(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
+func (w *Watcher) watchPods(ctx context.Context) {
+	ticker := time.NewTicker(w.opts.PollInterval)
 	defer ticker.Stop()
 	w.fetchAndSendPods(ctx)
 	for {
@@ -85,7 +322,9 @@ func (w *Watcher) fetchAndSendPods(ctx context.Context) {
 		w.send(ctx, model.Update{Kind: model.UpdatePods, Err: err})
 		return
 	}
-	// Best-effort: enrich Pending pods with the last FailedScheduling reason.
+	if w.opts.MaxPods > 0 && len(pods) > w.opts.MaxPods {
+		pods = pods[:w.opts.MaxPods]
+	}
 	if reasons, rerr := FetchPendingReasons(ctx, w.cs); rerr == nil {
 		for i := range pods {
 			if pods[i].Status == "Pending" {
@@ -96,8 +335,8 @@ func (w *Watcher) fetchAndSendPods(ctx context.Context) {
 	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
 }
 
-func (w *Watcher) watchNodes(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
+func (w *Watcher) watchNodes(ctx context.Context) {
+	ticker := time.NewTicker(w.opts.PollInterval)
 	defer ticker.Stop()
 	w.fetchAndSendNodes(ctx)
 	for {
@@ -118,21 +357,22 @@ func (w *Watcher) fetchAndSendNodes(ctx context.Context) {
 		w.send(ctx, model.Update{Kind: model.UpdateNodes, Err: err})
 		return
 	}
-	// Best-effort: merge metrics-server data if available.
-	if metrics, _ := FetchNodeMetrics(ctx, w.cs); metrics != nil {
-		for i := range nodes {
-			if m, ok := metrics[nodes[i].Name]; ok {
-				nodes[i].UsedCPUm = m.cpuM
-				nodes[i].UsedMemMi = m.memMi
-				nodes[i].MetricsOK = true
+	if !w.opts.DisableMetrics {
+		if metrics, _ := FetchNodeMetrics(ctx, w.cs); metrics != nil {
+			for i := range nodes {
+				if m, ok := metrics[nodes[i].Name]; ok {
+					nodes[i].UsedCPUm = m.cpuM
+					nodes[i].UsedMemMi = m.memMi
+					nodes[i].MetricsOK = true
+				}
 			}
 		}
 	}
 	w.send(ctx, model.Update{Kind: model.UpdateNodes, Nodes: nodes})
 }
 
-func (w *Watcher) watchNamespaces(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
+func (w *Watcher) watchNamespaces(ctx context.Context) {
+	ticker := time.NewTicker(w.opts.PollInterval)
 	defer ticker.Stop()
 	w.fetchAndSendNamespaces(ctx)
 	for {
@@ -152,8 +392,8 @@ func (w *Watcher) fetchAndSendNamespaces(ctx context.Context) {
 	w.send(ctx, model.Update{Kind: model.UpdateNamespaces, Namespaces: nss, Err: err})
 }
 
-func (w *Watcher) watchDeployments(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
+func (w *Watcher) watchDeployments(ctx context.Context) {
+	ticker := time.NewTicker(w.opts.PollInterval)
 	defer ticker.Stop()
 	w.fetchAndSendDeployments(ctx)
 	for {
