@@ -107,24 +107,30 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	// ── hex border taper depth ────────────────────────────────────────────────
 	// Must match DrawHexBorder's own numTaper calculation so content rows line up.
 	numTaper := 2
-	// ── uniform box height: global max across all nodes ───────────────────────
-	// All boxes the same size — height driven purely by the busiest node.
-	// Overhead = 2*numTaper taper rows; title sits on the last shoulder row (free).
 	hexOverhead := 2 * numTaper
-	globalBoxH := hexOverhead
-	for _, node := range state.Nodes {
-		nPods := len(nodePods[node.Name])
-		termRows := heatmapPodRows(nPods, boxW-2)
+
+	// Per-node heights based on actual pod count.
+	nodeBoxH := make([]int, len(state.Nodes))
+	for i, node := range state.Nodes {
+		termRows := heatmapPodRows(len(nodePods[node.Name]), boxW-2)
 		h := termRows + hexOverhead
-		if h > globalBoxH {
-			globalBoxH = h
+		if h < hexOverhead {
+			h = hexOverhead
 		}
+		nodeBoxH[i] = h
 	}
 
-	// All box-rows share the same global height.
+	// Each box-row height = max height among its nodes (so borders align).
 	boxRowH := make([]int, nBoxRows)
-	for i := range boxRowH {
-		boxRowH[i] = globalBoxH
+	for rowIdx, rowN := range plan {
+		rowMax := hexOverhead
+		for col := 0; col < rowN; col++ {
+			ni := model.HeatmapRowColToNodePlan(plan, rowIdx, col)
+			if ni < len(nodeBoxH) && nodeBoxH[ni] > rowMax {
+				rowMax = nodeBoxH[ni]
+			}
+		}
+		boxRowH[rowIdx] = rowMax
 	}
 
 	// Cumulative y — zero gap between rows so hex caps interlock like a real honeycomb.
@@ -178,7 +184,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			pods := nodePods[node.Name]
 			gridW := boxW - 2
 			isSelected := nodeIdx == sel
-			nH := globalBoxH
+			nH := nodeBoxH[nodeIdx]
 
 			// hexagonal border
 			borderStyle := ui.StyleNodeHeader
