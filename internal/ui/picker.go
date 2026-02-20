@@ -234,14 +234,13 @@ func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
 		h = 2 * numTaper
 	}
 
-	// Top taper: only the innermost row (indent=0, shoulder) gets dashes.
-	// Cap rows (indent>0) just draw the two diagonal chars.
+	// Top taper: only the topmost row (k=0, cap/edge) gets dashes.
 	for k := 0; k < numTaper; k++ {
 		indent := (numTaper - 1 - k) * step
 		row := y + k
 		s.DrawText(x+indent, row, style, "╱")
-		if indent == 0 {
-			for i := 1; i < w-1; i++ {
+		if k == 0 {
+			for i := indent + 1; i < w-indent-1; i++ {
 				s.DrawText(x+i, row, style, "─")
 			}
 		}
@@ -254,13 +253,13 @@ func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
 		s.DrawText(x+w-1, y+i, style, "│")
 	}
 
-	// Bottom taper: only the outermost row (indent=0) gets dashes.
+	// Bottom taper: only the bottommost row (k=numTaper-1, cap/edge) gets dashes.
 	for k := 0; k < numTaper; k++ {
 		indent := k * step
 		row := y + h - numTaper + k
 		s.DrawText(x+indent, row, style, "╲")
-		if indent == 0 {
-			for i := 1; i < w-1; i++ {
+		if k == numTaper-1 {
+			for i := indent + 1; i < w-indent-1; i++ {
 				s.DrawText(x+i, row, style, "─")
 			}
 		}
