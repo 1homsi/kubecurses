@@ -127,19 +127,35 @@ func (w *Watcher) startInformers(ctx context.Context) {
 
 	factory.Start(ctx.Done())
 
-	// Block until all caches are populated before sending initial state.
-	cache.WaitForCacheSync(ctx.Done(),
-		podInformer.Informer().HasSynced,
-		nodeInformer.Informer().HasSynced,
-		nsInformer.Informer().HasSynced,
-		depInformer.Informer().HasSynced,
-	)
+	// Send each resource type as soon as its own cache is ready — nodes appear
+	// immediately without waiting for the (much larger) pod cache to sync.
+	synced := make(chan struct{})
+	go func() {
+		cache.WaitForCacheSync(ctx.Done(), nodeInformer.Informer().HasSynced)
+		w.sendNodesFromFactory(ctx, factory, nil)
+	}()
+	go func() {
+		cache.WaitForCacheSync(ctx.Done(), nsInformer.Informer().HasSynced)
+		w.sendNamespacesFromFactory(ctx, factory)
+	}()
+	go func() {
+		cache.WaitForCacheSync(ctx.Done(), depInformer.Informer().HasSynced)
+		w.sendDeploymentsFromFactory(ctx, factory)
+	}()
+	go func() {
+		// Pods last — largest cache; send when ready, then signal all-synced.
+		cache.WaitForCacheSync(ctx.Done(), podInformer.Informer().HasSynced)
+		w.sendPodsFromFactory(ctx, factory)
+		close(synced)
+	}()
 
-	// Send initial state via factory's cached listers.
-	w.sendPodsFromFactory(ctx, factory)
-	w.sendNodesFromFactory(ctx, factory, nil)
-	w.sendNamespacesFromFactory(ctx, factory)
-	w.sendDeploymentsFromFactory(ctx, factory)
+	// Wait for all caches before starting the event-driven workers so we
+	// don't race with the initial sends above.
+	select {
+	case <-ctx.Done():
+		return
+	case <-synced:
+	}
 
 	// Metrics goroutine — always polled even in Watch mode.
 	if !w.opts.DisableMetrics && w.opts.MetricsInterval > 0 {
