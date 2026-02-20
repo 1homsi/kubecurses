@@ -207,6 +207,27 @@ func DrawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {
 	drawBorderOnly(s, x, y, w, h, style)
 }
 
+// DrawHexBorder draws a box border with diagonal corners (╱ ╲) to give a
+// hexagonal feel. Interior is not touched.
+//
+//	╱──────╲
+//	│      │
+//	╲──────╱
+func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
+	s.DrawText(x, y, style, "╱")
+	s.DrawText(x+w-1, y, style, "╲")
+	s.DrawText(x, y+h-1, style, "╲")
+	s.DrawText(x+w-1, y+h-1, style, "╱")
+	for i := 1; i < w-1; i++ {
+		s.DrawText(x+i, y, style, "─")
+		s.DrawText(x+i, y+h-1, style, "─")
+	}
+	for i := 1; i < h-1; i++ {
+		s.DrawText(x, y+i, style, "│")
+		s.DrawText(x+w-1, y+i, style, "│")
+	}
+}
+
 // drawBorderOnly draws only the rounded-corner box border using the given style.
 // The interior is not touched — callers fill it themselves.
 func drawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {

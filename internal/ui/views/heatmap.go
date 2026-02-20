@@ -22,7 +22,7 @@ import (
 const (
 	hexCellW      = 2  // ⬢ (1 col) + 1 space gap
 	hexStagger    = 1  // odd-row left-indent
-	maxHexPerRow  = 10 // cap per even row so wrapping always produces honeycomb rows
+	maxHexPerRow  = 7 // cap per even row so wrapping always produces honeycomb rows
 )
 
 var (
@@ -89,9 +89,9 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	if availW < minBoxW {
 		availW = minBoxW
 	}
-	// Prefer 3 columns, fall back to 2 then 1.
+	// Prefer 4 columns, fall back to 3, 2, then 1.
 	cols := 1
-	for _, c := range []int{3, 2, 1} {
+	for _, c := range []int{4, 3, 2, 1} {
 		if availW/c >= minBoxW {
 			cols = c
 			break
@@ -179,7 +179,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		if isSelected {
 			borderStyle = ui.StyleHeatmapNodeSel
 		}
-		ui.DrawBorderOnly(s, x, y, boxW, boxH+1, borderStyle)
+		ui.DrawHexBorder(s, x, y, boxW, boxH+1, borderStyle)
 
 		// ready dot on top border
 		dotStyle := ui.StyleNodeReadyDot
