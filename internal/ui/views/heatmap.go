@@ -100,7 +100,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	state.HeatmapCols = cols
 
 	// ── symmetric hex-cluster row plan ────────────────────────────────────────
-	plan := model.HeatmapPlanRows(len(state.Nodes), cols)
+	plan := model.HeatmapPlanRowsMin(len(state.Nodes), cols, 4)
 	state.HeatmapRowPlan = plan
 	nBoxRows := len(plan)
 
