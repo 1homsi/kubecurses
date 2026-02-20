@@ -32,7 +32,10 @@ var (
 
 // HeatmapView renders per-node honeycomb grids of pod cells coloured by status.
 // Selection tracks the active NODE. h/j/k/l navigate the grid; Enter opens the node.
-type HeatmapView struct{}
+type HeatmapView struct {
+	cachedGen     uint64
+	cachedNodePods map[string][]model.Pod
+}
 
 func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	// Clear background so stale content from previous renders doesn't bleed through.
@@ -52,36 +55,41 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		cellChar = hexCharASCII
 	}
 
-	// ── node → pods ───────────────────────────────────────────────────────────
-	nodePods := make(map[string][]model.Pod, len(state.Nodes))
-	for _, p := range state.Pods {
-		nodePods[p.Node] = append(nodePods[p.Node], p)
-	}
-	podOrder := func(status string) int {
-		switch status {
-		case "Failed", "CrashLoopBackOff", "OOMKilled", "ImagePullBackOff",
-			"ErrImagePull", "CreateContainerConfigError", "InvalidImageName":
-			return 0
-		case "Pending":
-			return 1
-		case "Running":
-			return 2
-		case "Terminating":
-			return 3
+	// ── node → pods (cached — only rebuild when pod data changes) ─────────────
+	if v.cachedGen != state.PodGeneration || v.cachedNodePods == nil {
+		nodePods := make(map[string][]model.Pod, len(state.Nodes))
+		for _, p := range state.Pods {
+			nodePods[p.Node] = append(nodePods[p.Node], p)
 		}
-		return 4
-	}
-	for node := range nodePods {
-		pods := nodePods[node]
-		sort.Slice(pods, func(i, j int) bool {
-			oi, oj := podOrder(pods[i].Status), podOrder(pods[j].Status)
-			if oi != oj {
-				return oi < oj
+		podOrder := func(status string) int {
+			switch status {
+			case "Failed", "CrashLoopBackOff", "OOMKilled", "ImagePullBackOff",
+				"ErrImagePull", "CreateContainerConfigError", "InvalidImageName":
+				return 0
+			case "Pending":
+				return 1
+			case "Running":
+				return 2
+			case "Terminating":
+				return 3
 			}
-			return pods[i].Name < pods[j].Name
-		})
-		nodePods[node] = pods
+			return 4
+		}
+		for node := range nodePods {
+			pods := nodePods[node]
+			sort.Slice(pods, func(i, j int) bool {
+				oi, oj := podOrder(pods[i].Status), podOrder(pods[j].Status)
+				if oi != oj {
+					return oi < oj
+				}
+				return pods[i].Name < pods[j].Name
+			})
+			nodePods[node] = pods
+		}
+		v.cachedNodePods = nodePods
+		v.cachedGen = state.PodGeneration
 	}
+	nodePods := v.cachedNodePods
 
 	// ── box width & column count ──────────────────────────────────────────────
 	minBoxW := 30

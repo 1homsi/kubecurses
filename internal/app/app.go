@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -143,6 +144,18 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.draw()
 
+	// Rate-limit redraws triggered by data/log updates to ~30 fps so that
+	// high-frequency log streams don't saturate the terminal with renders.
+	// Key/mouse events always draw immediately for responsive feel.
+	const dataDrawInterval = 33 * time.Millisecond
+	var lastDataDraw time.Time
+	dataDraw := func() {
+		if time.Since(lastDataDraw) >= dataDrawInterval {
+			a.draw()
+			lastDataDraw = time.Now()
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -151,7 +164,7 @@ func (a *App) Run(ctx context.Context) error {
 
 		case update := <-a.watcher.Updates():
 			a.state.ApplyUpdate(update)
-			a.draw()
+			dataDraw()
 
 		case line := <-a.logLines:
 			// Append incoming log line; cap buffer to avoid unbounded growth.
@@ -159,7 +172,7 @@ func (a *App) Run(ctx context.Context) error {
 			if len(a.state.LogsLines) > maxLogLines {
 				a.state.LogsLines = a.state.LogsLines[len(a.state.LogsLines)-maxLogLines:]
 			}
-			a.draw()
+			dataDraw()
 
 		case tcellEv := <-a.events:
 			if tcellEv == nil {

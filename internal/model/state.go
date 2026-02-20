@@ -53,6 +53,9 @@ type AppState struct {
 	ClusterPickerSel  int
 	ClusterPickerCurr string // currently connected context
 
+	// Incremented each time Pods is replaced — used by views to detect stale caches.
+	PodGeneration uint64
+
 	// Heatmap navigation state.
 	NodesLoaded       bool   // true once the first nodes update has been received
 	HeatmapCols       int    // grid column count — written by HeatmapView.Draw each frame
@@ -72,6 +75,7 @@ func (s *AppState) ApplyUpdate(u Update) {
 	switch u.Kind {
 	case UpdatePods:
 		s.Pods = u.Pods
+		s.PodGeneration++
 		s.clampSelection(TabPods, len(s.Pods))
 	case UpdateNodes:
 		s.Nodes = u.Nodes
