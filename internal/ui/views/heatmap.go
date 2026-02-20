@@ -214,8 +214,8 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			// ── pod grid: symmetric hex-cluster layout ────────────────────────
 			innerY := y + numTaper
 			maxPerRow := gridW / hexCellW
-			if maxPerRow < 1 {
-				maxPerRow = 1
+			if maxPerRow < 4 {
+				maxPerRow = 4
 			}
 			podPlan := model.HeatmapPlanRows(len(pods), maxPerRow)
 			pIdx := 0
@@ -258,8 +258,8 @@ func heatmapPodRows(nPods, gridW int) int {
 		gridW = hexCellW
 	}
 	maxPerRow := gridW / hexCellW
-	if maxPerRow < 1 {
-		maxPerRow = 1
+	if maxPerRow < 4 {
+		maxPerRow = 4
 	}
 	return len(model.HeatmapPlanRows(nPods, maxPerRow))
 }
