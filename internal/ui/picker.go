@@ -207,24 +207,60 @@ func DrawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {
 	drawBorderOnly(s, x, y, w, h, style)
 }
 
-// DrawHexBorder draws a box border with diagonal corners (╱ ╲) to give a
-// hexagonal feel. Interior is not touched.
+// DrawHexBorder draws a hexagonal box border with a multi-row taper:
 //
-//	╱──────╲
-//	│      │
-//	╲──────╱
+//	   ╱──────────╲     ← top cap     (indent = numTaper-1)
+//	  ╱            ╲    ← taper row   (indent = numTaper-2)
+//	 ╱              ╲   ← taper row   (indent = 1)
+//	╱                ╲  ← shoulder    (indent = 0, full width)
+//	│  content        │ ← body rows
+//	╲                ╱
+//	 ╲              ╱
+//	  ╲            ╱
+//	   ╲──────────╱     ← bottom cap
+//
+// numTaper = w/8 (min 2) — the number of diagonal rows on each side.
+// This creates a genuine hexagonal silhouette at any box width.
+// Minimum h = 2*numTaper (no body rows).
 func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
-	s.DrawText(x, y, style, "╱")
-	s.DrawText(x+w-1, y, style, "╲")
-	s.DrawText(x, y+h-1, style, "╲")
-	s.DrawText(x+w-1, y+h-1, style, "╱")
-	for i := 1; i < w-1; i++ {
-		s.DrawText(x+i, y, style, "─")
-		s.DrawText(x+i, y+h-1, style, "─")
+	const step = 2 // chars narrowed per taper row on each side
+	numTaper := 2
+	// Minimum width: cap must be at least 4 chars wide (2 corners + 2 dashes).
+	minW := 2*(numTaper-1)*step + 4
+	if w < minW {
+		w = minW
 	}
-	for i := 1; i < h-1; i++ {
+	if h < 2*numTaper {
+		h = 2 * numTaper
+	}
+
+	// Top taper: rows 0 … numTaper-1.
+	// Every taper row gets dashes so each is a visible horizontal line.
+	for k := 0; k < numTaper; k++ {
+		indent := (numTaper - 1 - k) * step
+		row := y + k
+		s.DrawText(x+indent, row, style, "╱")
+		for i := indent + 1; i < w-indent-1; i++ {
+			s.DrawText(x+i, row, style, "─")
+		}
+		s.DrawText(x+w-indent-1, row, style, "╲")
+	}
+
+	// Vertical body sides.
+	for i := numTaper; i < h-numTaper; i++ {
 		s.DrawText(x, y+i, style, "│")
 		s.DrawText(x+w-1, y+i, style, "│")
+	}
+
+	// Bottom taper: mirror of top.
+	for k := 0; k < numTaper; k++ {
+		indent := k * step
+		row := y + h - numTaper + k
+		s.DrawText(x+indent, row, style, "╲")
+		for i := indent + 1; i < w-indent-1; i++ {
+			s.DrawText(x+i, row, style, "─")
+		}
+		s.DrawText(x+w-indent-1, row, style, "╱")
 	}
 }
 

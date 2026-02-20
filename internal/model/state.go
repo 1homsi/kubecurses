@@ -58,6 +58,7 @@ type AppState struct {
 
 	// Heatmap navigation state.
 	NodesLoaded       bool   // true once the first nodes update has been received
+	PodsLoaded        bool   // true once the first pods update has been received
 	HeatmapCols       int    // grid column count — written by HeatmapView.Draw each frame
 	HeatmapScroll     int    // first visible box-row index
 	HeatmapNodeDetail bool   // true = node-detail overlay is active
@@ -76,6 +77,7 @@ func (s *AppState) ApplyUpdate(u Update) {
 	case UpdatePods:
 		s.Pods = u.Pods
 		s.PodGeneration++
+		s.PodsLoaded = true
 		s.clampSelection(TabPods, len(s.Pods))
 	case UpdateNodes:
 		s.Nodes = u.Nodes
@@ -133,4 +135,42 @@ func (s *AppState) SetTab(t Tab) {
 	if t >= 0 && t < tabCount {
 		s.ActiveTab = t
 	}
+}
+
+// ── Heatmap honeycomb layout helpers ──────────────────────────────────────────
+
+// HeatmapRowCols returns the number of nodes in box-row rowIdx.
+// Even rows have cols nodes; odd rows have cols-1 (minimum 1).
+func HeatmapRowCols(rowIdx, cols int) int {
+	if rowIdx%2 == 1 {
+		c := cols - 1
+		if c < 1 {
+			c = 1
+		}
+		return c
+	}
+	return cols
+}
+
+// HeatmapNodeToRowCol converts a flat node index to (boxRow, colInRow).
+func HeatmapNodeToRowCol(nodeIdx, cols int) (row, col int) {
+	remaining := nodeIdx
+	row = 0
+	for {
+		n := HeatmapRowCols(row, cols)
+		if remaining < n {
+			return row, remaining
+		}
+		remaining -= n
+		row++
+	}
+}
+
+// HeatmapRowColToNode converts (boxRow, colInRow) to a flat node index.
+func HeatmapRowColToNode(row, col, cols int) int {
+	idx := 0
+	for r := 0; r < row; r++ {
+		idx += HeatmapRowCols(r, cols)
+	}
+	return idx + col
 }
