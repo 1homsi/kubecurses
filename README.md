@@ -159,6 +159,7 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 ## Roadmap
 
 - [ ] Informer-based live updates (no polling)
+- [ ] Heatmap tab — per-node honeycomb grid where each cell is a pod colored by status (green/amber/red/gray), instant visual of cluster health and scheduling imbalance at a glance
 - [ ] Exec shell (`e` to open a shell in a container)
 - [ ] Workload grouping — pods grouped by Deployment/StatefulSet/DaemonSet
 - [ ] Persisted settings (`~/.config/kubecurses/config.yaml`)
