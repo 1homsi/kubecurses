@@ -30,10 +30,21 @@ type ovRow struct {
 	text     string // for rkReason / rkWarning
 }
 
+// ovCacheKey groups all inputs that affect the row model.
+type ovCacheKey struct {
+	podGen  uint64
+	nodeGen uint64
+	query   string
+	ns      string
+}
+
 // NodeOverviewView renders nodes as section headers with their pods nested below.
 type NodeOverviewView struct {
 	rows         []ovRow
 	scrollOffset int
+	cacheValid   bool
+	cacheKey     ovCacheKey
+	cachedRows   []ovRow
 }
 
 // dynCols computes dynamic column widths from row width w.
@@ -148,7 +159,13 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 }
 
 func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
-	v.rows = v.buildRows(state, state.SearchQuery)
+	key := ovCacheKey{state.PodGeneration, state.NodeGeneration, state.SearchQuery, state.Namespace}
+	if !v.cacheValid || key != v.cacheKey {
+		v.cachedRows = v.buildRows(state, state.SearchQuery)
+		v.cacheKey = key
+		v.cacheValid = true
+	}
+	v.rows = v.cachedRows
 	sel := state.Selection[model.TabNodeOverview]
 
 	if sel >= len(v.rows) && len(v.rows) > 0 {

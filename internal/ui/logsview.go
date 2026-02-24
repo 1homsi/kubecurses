@@ -19,6 +19,19 @@ var (
 	styleLogsBorder  = tcell.StyleDefault.Background(tcell.NewRGBColor(13, 14, 20)).Foreground(tcell.NewRGBColor(50, 80, 150))
 )
 
+// CachedWrapLogs returns the wrapped form of state.LogsLines for lineW, using
+// a cache stored in the state to avoid recomputing when neither the width nor
+// the number of lines has changed.
+func CachedWrapLogs(state *model.AppState, lineW int) []string {
+	if lineW == state.LogsWrapWidth && len(state.LogsLines) == state.LogsWrapCount {
+		return state.LogsWrapped
+	}
+	state.LogsWrapped = WrapLines(state.LogsLines, lineW)
+	state.LogsWrapWidth = lineW
+	state.LogsWrapCount = len(state.LogsLines)
+	return state.LogsWrapped
+}
+
 // WrapLines splits each element of lines into segments of at most maxW runes,
 // returning a flat slice of display rows. Lines that fit within maxW are passed
 // through unchanged. If maxW <= 0 the input slice is returned as-is.
@@ -113,7 +126,7 @@ func DrawLogsView(s *Screen, r Rect, state *model.AppState) {
 	lineW := r.W - 6
 
 	// Compute total display rows (for offset clamping).
-	totalRows := len(WrapLines(state.LogsLines, lineW))
+	totalRows := len(CachedWrapLogs(state, lineW))
 
 	offset := state.LogsOffset
 	if state.LogsAutoScroll {

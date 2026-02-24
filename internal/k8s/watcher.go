@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/labels"
@@ -12,7 +13,10 @@ import (
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
-const updateChanCap = 32
+const (
+	updateChanCap    = 32
+	pendingReasonsTTL = 30 * time.Second
+)
 
 // WatcherOptions controls how the Watcher fetches and delivers updates.
 type WatcherOptions struct {
@@ -32,6 +36,18 @@ type Watcher struct {
 	opts      WatcherOptions
 	updates   chan model.Update
 	refresh   chan struct{}
+
+	// pendingReasonsCache is keyed by pod name and refreshed at most once per
+	// pendingReasonsTTL. Only the pod worker goroutine touches these fields.
+	pendingReasonsCache   map[string]string
+	pendingReasonsFetchAt time.Time
+
+	// nodeBaseCache holds the last node list without metrics so that metrics
+	// ticks can patch-in usage values without re-listing all nodes.
+	// Protected by nodeBaseMu because the node-change worker and metrics
+	// goroutine run concurrently.
+	nodeBaseMu    sync.Mutex
+	nodeBaseCache []model.Node
 }
 
 // NewWatcher creates a Watcher. Call Start to begin.
@@ -225,28 +241,74 @@ func (w *Watcher) sendPodsFromFactory(ctx context.Context, factory informers.Sha
 	if w.opts.MaxPods > 0 && len(pods) > w.opts.MaxPods {
 		pods = pods[:w.opts.MaxPods]
 	}
-	if reasons, rerr := FetchPendingReasons(ctx, w.cs); rerr == nil {
+	w.applyPendingReasons(ctx, pods)
+	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
+}
+
+// applyPendingReasons decorates Pending pods with their last FailedScheduling
+// reason, fetching from the API at most once per pendingReasonsTTL. Skips the
+// API call entirely when there are no Pending pods.
+func (w *Watcher) applyPendingReasons(ctx context.Context, pods []model.Pod) {
+	hasPending := false
+	for i := range pods {
+		if pods[i].Status == "Pending" {
+			hasPending = true
+			break
+		}
+	}
+	if !hasPending {
+		return
+	}
+	if w.pendingReasonsCache != nil && time.Since(w.pendingReasonsFetchAt) < pendingReasonsTTL {
+		for i := range pods {
+			if pods[i].Status == "Pending" {
+				pods[i].PendingReason = w.pendingReasonsCache[pods[i].Name]
+			}
+		}
+		return
+	}
+	if reasons, err := FetchPendingReasons(ctx, w.cs); err == nil {
+		w.pendingReasonsCache = reasons
+		w.pendingReasonsFetchAt = time.Now()
 		for i := range pods {
 			if pods[i].Status == "Pending" {
 				pods[i].PendingReason = reasons[pods[i].Name]
 			}
 		}
 	}
-	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
 }
 
 func (w *Watcher) sendNodesFromFactory(ctx context.Context, factory informers.SharedInformerFactory, metrics map[string]nodeMetrics) {
-	items, err := factory.Core().V1().Nodes().Lister().List(labels.Everything())
-	if err != nil {
-		w.send(ctx, model.Update{Kind: model.UpdateNodes, Err: err})
-		return
-	}
-	now := time.Now()
-	nodes := make([]model.Node, 0, len(items))
-	for _, n := range items {
-		nodes = append(nodes, convertNode(*n, now))
-	}
-	if metrics != nil {
+	var nodes []model.Node
+
+	if metrics == nil {
+		// Node change: re-list from informer and refresh the base cache.
+		items, err := factory.Core().V1().Nodes().Lister().List(labels.Everything())
+		if err != nil {
+			w.send(ctx, model.Update{Kind: model.UpdateNodes, Err: err})
+			return
+		}
+		now := time.Now()
+		base := make([]model.Node, 0, len(items))
+		for _, n := range items {
+			base = append(base, convertNode(*n, now))
+		}
+		w.nodeBaseMu.Lock()
+		w.nodeBaseCache = base
+		w.nodeBaseMu.Unlock()
+		nodes = base
+	} else {
+		// Metrics tick: clone the cached base and patch usage values only.
+		w.nodeBaseMu.Lock()
+		base := w.nodeBaseCache
+		if len(base) > 0 {
+			nodes = make([]model.Node, len(base))
+			copy(nodes, base)
+		}
+		w.nodeBaseMu.Unlock()
+		if nodes == nil {
+			return // base not populated yet; skip this tick
+		}
 		for i := range nodes {
 			if m, ok := metrics[nodes[i].Name]; ok {
 				nodes[i].UsedCPUm = m.cpuM
@@ -255,6 +317,7 @@ func (w *Watcher) sendNodesFromFactory(ctx context.Context, factory informers.Sh
 			}
 		}
 	}
+
 	w.send(ctx, model.Update{Kind: model.UpdateNodes, Nodes: nodes})
 }
 
@@ -341,13 +404,7 @@ func (w *Watcher) fetchAndSendPods(ctx context.Context) {
 	if w.opts.MaxPods > 0 && len(pods) > w.opts.MaxPods {
 		pods = pods[:w.opts.MaxPods]
 	}
-	if reasons, rerr := FetchPendingReasons(ctx, w.cs); rerr == nil {
-		for i := range pods {
-			if pods[i].Status == "Pending" {
-				pods[i].PendingReason = reasons[pods[i].Name]
-			}
-		}
-	}
+	w.applyPendingReasons(ctx, pods)
 	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
 }
 

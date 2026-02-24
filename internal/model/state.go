@@ -55,6 +55,14 @@ type AppState struct {
 
 	// Incremented each time Pods is replaced — used by views to detect stale caches.
 	PodGeneration uint64
+	// Incremented each time Nodes is replaced — used by views to detect stale caches.
+	NodeGeneration uint64
+
+	// Logs wrapping cache — lazily populated by DrawLogsView / scroll handlers.
+	// Both width and line count must match for the cache to be valid.
+	LogsWrapped   []string
+	LogsWrapWidth int
+	LogsWrapCount int // len(LogsLines) when LogsWrapped was computed
 
 	// Heatmap navigation state.
 	NodesLoaded       bool   // true once the first nodes update has been received
@@ -82,6 +90,7 @@ func (s *AppState) ApplyUpdate(u Update) {
 		s.clampSelection(TabPods, len(s.Pods))
 	case UpdateNodes:
 		s.Nodes = u.Nodes
+		s.NodeGeneration++
 		s.NodesLoaded = true
 		s.clampSelection(TabHeatmap, len(s.Nodes))
 		// TabNodeOverview rows = nodes + their pods; clamped by activeLen in app

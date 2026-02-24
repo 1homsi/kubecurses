@@ -28,10 +28,20 @@ type xrayRow struct {
 	contIsLast bool // this container is the last under its pod
 }
 
+// xrayCacheKey groups all inputs that affect the row model.
+type xrayCacheKey struct {
+	podGen uint64
+	query  string
+	ns     string
+}
+
 // XrayView renders a namespace → pod → container tree.
 type XrayView struct {
 	rows         []xrayRow
 	scrollOffset int
+	cacheValid   bool
+	cacheKey     xrayCacheKey
+	cachedRows   []xrayRow
 }
 
 // RowCount returns the current number of display rows (all kinds).
@@ -100,7 +110,13 @@ func (v *XrayView) buildRows(state *model.AppState, query string) []xrayRow {
 }
 
 func (v *XrayView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
-	v.rows = v.buildRows(state, state.SearchQuery)
+	key := xrayCacheKey{state.PodGeneration, state.SearchQuery, state.Namespace}
+	if !v.cacheValid || key != v.cacheKey {
+		v.cachedRows = v.buildRows(state, state.SearchQuery)
+		v.cacheKey = key
+		v.cacheValid = true
+	}
+	v.rows = v.cachedRows
 	sel := state.Selection[model.TabPods]
 
 	if sel >= len(v.rows) && len(v.rows) > 0 {

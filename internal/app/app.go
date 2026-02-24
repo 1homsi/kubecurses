@@ -226,7 +226,7 @@ func (a *App) handleMouseEvent(ev *tcell.EventMouse) bool {
 	case btn&tcell.WheelUp != 0:
 		switch {
 		case a.state.LogsMode:
-			a.logsScrollBy(-3, logsContentH, len(ui.WrapLines(a.state.LogsLines, w-6)))
+			a.logsScrollBy(-3, logsContentH, len(ui.CachedWrapLogs(&a.state, w-6)))
 		case a.state.ClusterPickerMode:
 			if a.state.ClusterPickerSel > 0 {
 				a.state.ClusterPickerSel--
@@ -244,7 +244,7 @@ func (a *App) handleMouseEvent(ev *tcell.EventMouse) bool {
 	case btn&tcell.WheelDown != 0:
 		switch {
 		case a.state.LogsMode:
-			a.logsScrollBy(3, logsContentH, len(ui.WrapLines(a.state.LogsLines, w-6)))
+			a.logsScrollBy(3, logsContentH, len(ui.CachedWrapLogs(&a.state, w-6)))
 		case a.state.ClusterPickerMode:
 			if a.state.ClusterPickerSel < len(a.state.ClusterPickerList)-1 {
 				a.state.ClusterPickerSel++
@@ -267,7 +267,7 @@ func (a *App) applyLogsAction(action ui.Action) bool {
 	w, h := a.screen.Size()
 	// tab(1) + status(1) + box-top-border(1) + status-strip(1) + box-bottom-border(1)
 	contentH := h - 5
-	totalLines := len(ui.WrapLines(a.state.LogsLines, w-6))
+	totalLines := len(ui.CachedWrapLogs(&a.state, w-6))
 
 	switch action {
 	case ui.ActionQuit:
