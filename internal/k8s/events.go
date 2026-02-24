@@ -8,7 +8,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// FetchPendingReasons returns a map of pod-name → most recent FailedScheduling
+// FetchPendingReasons returns a map of namespace/name → most recent FailedScheduling
 // event message. A single API call fetches all such events cluster-wide.
 func FetchPendingReasons(ctx context.Context, cs *kubernetes.Clientset) (map[string]string, error) {
 	list, err := cs.CoreV1().Events("").List(ctx, metav1.ListOptions{
@@ -24,7 +24,7 @@ func FetchPendingReasons(ctx context.Context, cs *kubernetes.Clientset) (map[str
 	}
 	best := make(map[string]entry, len(list.Items))
 	for _, e := range list.Items {
-		name := e.InvolvedObject.Name
+		name := e.InvolvedObject.Namespace + "/" + e.InvolvedObject.Name
 		ts := e.LastTimestamp.Unix()
 		if cur, ok := best[name]; !ok || ts > cur.ts {
 			best[name] = entry{msg: e.Message, ts: ts}

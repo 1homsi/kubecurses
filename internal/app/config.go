@@ -11,11 +11,11 @@ type Config struct {
 	Watch           bool          // default true — use informers instead of polling
 	PollInterval    time.Duration // default 10s (polling mode only)
 	MetricsInterval time.Duration // default 30s
+	EnableMetrics   bool          // default false — metrics are opt-in
 	RequestTimeout  time.Duration // default 30s
 	KubeAPIQPS      float32       // default 20
 	KubeAPIBurst    int           // default 40
-	DisableMetrics  bool
-	MaxPods         int   // 0 = unlimited
+	MaxPods         int           // 0 = unlimited
 	NoIcons         bool
 	LogTailLines    int64 // default 200
 }

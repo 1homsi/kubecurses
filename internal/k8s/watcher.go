@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	updateChanCap    = 32
+	updateChanCap     = 32
 	pendingReasonsTTL = 30 * time.Second
 )
 
@@ -23,7 +23,7 @@ type WatcherOptions struct {
 	Watch           bool          // true = informer mode, false = polling
 	PollInterval    time.Duration // used in polling mode
 	MetricsInterval time.Duration // how often to refresh metrics (informer mode)
-	DisableMetrics  bool          // skip metrics-server calls entirely
+	EnableMetrics   bool          // fetch metrics-server data when true
 	MaxPods         int           // cap pod list (0 = unlimited)
 }
 
@@ -37,7 +37,7 @@ type Watcher struct {
 	updates   chan model.Update
 	refresh   chan struct{}
 
-	// pendingReasonsCache is keyed by pod name and refreshed at most once per
+	// pendingReasonsCache is keyed by namespace/name and refreshed at most once per
 	// pendingReasonsTTL. Only the pod worker goroutine touches these fields.
 	pendingReasonsCache   map[string]string
 	pendingReasonsFetchAt time.Time
@@ -174,7 +174,7 @@ func (w *Watcher) startInformers(ctx context.Context) {
 	}
 
 	// Metrics goroutine — always polled even in Watch mode.
-	if !w.opts.DisableMetrics && w.opts.MetricsInterval > 0 {
+	if w.opts.EnableMetrics && w.opts.MetricsInterval > 0 {
 		go w.watchMetricsFactory(ctx, factory)
 	}
 
@@ -262,7 +262,7 @@ func (w *Watcher) applyPendingReasons(ctx context.Context, pods []model.Pod) {
 	if w.pendingReasonsCache != nil && time.Since(w.pendingReasonsFetchAt) < pendingReasonsTTL {
 		for i := range pods {
 			if pods[i].Status == "Pending" {
-				pods[i].PendingReason = w.pendingReasonsCache[pods[i].Name]
+				pods[i].PendingReason = w.pendingReasonsCache[pods[i].Namespace+"/"+pods[i].Name]
 			}
 		}
 		return
@@ -272,7 +272,7 @@ func (w *Watcher) applyPendingReasons(ctx context.Context, pods []model.Pod) {
 		w.pendingReasonsFetchAt = time.Now()
 		for i := range pods {
 			if pods[i].Status == "Pending" {
-				pods[i].PendingReason = reasons[pods[i].Name]
+				pods[i].PendingReason = reasons[pods[i].Namespace+"/"+pods[i].Name]
 			}
 		}
 	}
@@ -430,7 +430,7 @@ func (w *Watcher) fetchAndSendNodes(ctx context.Context) {
 		w.send(ctx, model.Update{Kind: model.UpdateNodes, Err: err})
 		return
 	}
-	if !w.opts.DisableMetrics {
+	if w.opts.EnableMetrics {
 		if metrics, _ := FetchNodeMetrics(ctx, w.cs); metrics != nil {
 			for i := range nodes {
 				if m, ok := metrics[nodes[i].Name]; ok {

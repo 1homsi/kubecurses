@@ -51,8 +51,8 @@ kubecurses --namespace default
 # Use a specific context
 kubecurses --context my-cluster
 
-# Disable metrics-server integration
-kubecurses --disable-metrics
+# Enable metrics-server integration (off by default)
+kubecurses --enable-metrics
 
 # Use informer-based live updates (default) or fall back to polling
 kubecurses --watch=false --interval 5s
@@ -192,7 +192,7 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 | `--request-timeout` | `30s` | Kubernetes API request timeout |
 | `--kube-api-qps` | `20` | Client-go QPS limit |
 | `--kube-api-burst` | `40` | Client-go burst limit |
-| `--disable-metrics` | `false` | Skip metrics-server calls entirely |
+| `--enable-metrics` | `false` | Enable metrics-server calls |
 | `--max-pods` | `0` (unlimited) | Cap pods shown per refresh |
 | `--no-icons` | `false` | Plain ASCII fallbacks instead of Unicode icons |
 | `--log-lines` | `200` | Log tail line count |

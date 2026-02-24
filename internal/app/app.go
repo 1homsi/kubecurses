@@ -33,8 +33,8 @@ type App struct {
 	watcherCancel  context.CancelFunc // cancels only the watcher goroutines (not Run itself)
 	runCtx         context.Context    // Run()'s context, used when restarting the watcher
 	views          [5]views.View
-	nodeOverview   rowCounter           // kept for RowCount access; swap impl to change overview style
-	xrayView       *views.XrayView      // typed for SelectedRef access
+	nodeOverview   rowCounter            // kept for RowCount access; swap impl to change overview style
+	xrayView       *views.XrayView       // typed for SelectedRef access
 	nodeDetailView *views.NodeDetailView // heatmap node drill-down
 	events         chan tcell.Event      // fed by a single long-lived goroutine
 	logLines       chan string           // fed by the active log-streaming goroutine; nil when inactive
@@ -78,7 +78,7 @@ func New(cfg Config) (*App, error) {
 		Watch:           cfg.Watch,
 		PollInterval:    cfg.PollInterval,
 		MetricsInterval: cfg.MetricsInterval,
-		DisableMetrics:  cfg.DisableMetrics,
+		EnableMetrics:   cfg.EnableMetrics,
 		MaxPods:         cfg.MaxPods,
 	}
 	watcher := k8s.NewWatcher(cs, cfg.Namespace, watcherOpts)
@@ -374,7 +374,7 @@ func (a *App) switchCluster(newContext string) {
 		Watch:           a.cfg.Watch,
 		PollInterval:    a.cfg.PollInterval,
 		MetricsInterval: a.cfg.MetricsInterval,
-		DisableMetrics:  a.cfg.DisableMetrics,
+		EnableMetrics:   a.cfg.EnableMetrics,
 		MaxPods:         a.cfg.MaxPods,
 	}
 	a.watcher = k8s.NewWatcher(cs, a.cfg.Namespace, watcherOpts)
