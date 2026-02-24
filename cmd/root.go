@@ -5,14 +5,21 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	"github.com/1homsi/kubecurses/internal/app"
 )
 
 // Execute parses flags and runs the application.
 func Execute(version, commit, buildDate string) {
+	// Silence klog (used by client-go / informers) so its trace and reflector
+	// messages don't bleed through the tcell screen and corrupt the TUI.
+	klog.SetOutput(io.Discard)
+
 	cfg := app.DefaultConfig()
 
 	showVersion := flag.Bool("version", false, "print version and exit")
