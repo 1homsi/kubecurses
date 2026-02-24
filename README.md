@@ -185,7 +185,7 @@ The TUI suspends and hands the terminal directly to `/bin/sh` inside the contain
 
 ## Cluster switching
 
-Press `c` from any tab to open the in-app context picker. Select a context and press `Enter` — kubecurses reconnects without restarting and without touching your shell's current context.
+Press `c` from any tab to open the in-app context picker. Select a context and press `Enter` — kubecurses reconnects without restarting and writes the new context as `current-context` in your kubeconfig, so `kubectl` and other tools use it after you exit.
 
 ## Search
 

@@ -393,6 +393,11 @@ func (a *App) switchCluster(newContext string) {
 	a.state.Nodes = nil
 	a.state.Namespaces = nil
 	a.state.Deployments = nil
+
+	// Persist the new current-context so kubectl sees it after kubecurses exits.
+	if err := k8s.PersistCurrentContext(a.cfg.Kubeconfig, newContext); err != nil {
+		a.state.LastErr = fmt.Errorf("persist context: %w", err)
+	}
 }
 
 // openLogs starts streaming logs for the given pod/container.
