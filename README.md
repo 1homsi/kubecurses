@@ -101,7 +101,7 @@ kubecurses --version
 |-----|--------|
 | `j` / `k` | Navigate pods |
 | `l` | Stream logs for selected pod |
-| `e` | Exec command in selected pod |
+| `e` | Open interactive shell in selected pod |
 | `Esc` | Back to heatmap |
 
 ### Overview / Xray / other tabs
@@ -111,7 +111,7 @@ kubecurses --version
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `l` | Stream logs for selected pod / container (Xray) |
-| `e` | Exec command in selected pod / container (Xray) |
+| `e` | Open interactive shell in selected pod / container (Xray) |
 
 ### Inside the logs / exec view
 
@@ -177,14 +177,11 @@ Navigate to the **Xray** tab (`3`), select a pod or container row, and press `l`
 
 Navigate to the **Xray** tab (`3`) or open the **node detail view** (press `Enter` on a node in the Heatmap), select a pod or container row, and press `e`.
 
-A green-bordered overlay runs `id && uname -a && ls -la` inside the container via the Kubernetes exec API and streams the output into the dashboard.
+The TUI suspends and hands the terminal directly to `/bin/sh` inside the container — exactly like `kubectl exec -it`. The full terminal is available: colours, cursor movement, interactive editors (vim, nano), REPL tools, and any program that requires a real TTY all work as expected.
 
-- Output lines are hard-wrapped to the box width.
-- Autoscroll follows output as it arrives; `s` toggles it.
-- Transport and RBAC errors appear as a visible `── exec error: … ──` line.
-- Press `Esc` to close and cancel any in-progress command.
-
-> **Note:** This is an MVP — the command is fixed and the shell is non-interactive. Full interactive PTY support (raw key passthrough, terminal resize) is planned as a follow-up.
+- **Terminal resize** (`SIGWINCH`) is forwarded to the remote PTY in real time, so the shell correctly tracks window resizes.
+- Type `exit` or press `Ctrl+D` to end the session. The TUI resumes and redraws immediately.
+- Transport and RBAC errors are surfaced in the status bar after the session ends.
 
 ## Cluster switching
 
@@ -222,8 +219,7 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 
 ## Roadmap
 
-- [x] Exec output overlay (`e` — runs a fixed command, streams output)
-- [ ] Exec interactive shell (full PTY, raw key passthrough, resize)
+- [x] Exec interactive shell (`e` — full PTY, raw key passthrough, SIGWINCH resize)
 - [ ] Workload grouping — pods grouped by Deployment/StatefulSet/DaemonSet
 - [ ] Persisted settings (`~/.config/kubecurses/config.yaml`)
 - [ ] Brew tap

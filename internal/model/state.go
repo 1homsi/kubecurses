@@ -64,20 +64,6 @@ type AppState struct {
 	LogsWrapWidth int
 	LogsWrapCount int // len(LogsLines) when LogsWrapped was computed
 
-	// Exec overlay state — active when ExecMode is true.
-	ExecMode       bool
-	ExecNamespace  string
-	ExecPod        string
-	ExecContainer  string   // empty = first container / Kubernetes default
-	ExecLines      []string // buffered command output
-	ExecAutoScroll bool
-	ExecOffset     int // manual scroll position (ignored when ExecAutoScroll is on)
-
-	// Exec wrapping cache — same pattern as logs cache.
-	ExecWrapped   []string
-	ExecWrapWidth int
-	ExecWrapCount int // len(ExecLines) when ExecWrapped was computed
-
 	// Heatmap navigation state.
 	NodesLoaded       bool   // true once the first nodes update has been received
 	PodsLoaded        bool   // true once the first pods update has been received

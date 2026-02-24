@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"golang.org/x/term"
 
 	"github.com/1homsi/kubecurses/internal/k8s"
 	"github.com/1homsi/kubecurses/internal/model"
@@ -22,10 +24,7 @@ type rowCounter interface {
 	RowCount() int
 }
 
-const (
-	maxLogLines  = 5000
-	maxExecLines = 5000
-)
+const maxLogLines = 5000
 
 // App is the top-level application struct.
 type App struct {
@@ -42,8 +41,6 @@ type App struct {
 	events         chan tcell.Event      // fed by a single long-lived goroutine
 	logLines       chan string           // fed by the active log-streaming goroutine; nil when inactive
 	logsCancel     context.CancelFunc
-	execLines      chan string         // fed by the active exec goroutine; nil when inactive
-	execCancel     context.CancelFunc
 }
 
 // New creates and initialises a new App from the given Config.
@@ -179,14 +176,6 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			dataDraw()
 
-		case line := <-a.execLines:
-			// Append incoming exec output line; cap buffer.
-			a.state.ExecLines = append(a.state.ExecLines, line)
-			if len(a.state.ExecLines) > maxExecLines {
-				a.state.ExecLines = a.state.ExecLines[len(a.state.ExecLines)-maxExecLines:]
-			}
-			dataDraw()
-
 		case tcellEv := <-a.events:
 			if tcellEv == nil {
 				continue
@@ -216,9 +205,6 @@ func (a *App) handleEvent(ev tcell.Event) bool {
 	if a.state.HelpMode {
 		a.state.HelpMode = false
 		return false
-	}
-	if a.state.ExecMode {
-		return a.applyExecAction(ui.EventToAction(ev))
 	}
 	if a.state.LogsMode {
 		return a.applyLogsAction(ui.EventToAction(ev))
@@ -385,9 +371,8 @@ func (a *App) switchCluster(newContext string) {
 		a.state.LastErr = fmt.Errorf("switch cluster: %w", err)
 		return
 	}
-	// Close any active exec/log overlays before swapping the watcher so
-	// their goroutines don't outlive the old connection.
-	a.closeExec()
+	// Close any active log overlays before swapping the watcher so their
+	// goroutines don't outlive the old connection.
 	a.closeLogs()
 	// Swap the watcher.
 	watcherOpts := k8s.WatcherOptions{
@@ -412,8 +397,6 @@ func (a *App) switchCluster(newContext string) {
 
 // openLogs starts streaming logs for the given pod/container.
 func (a *App) openLogs(ns, pod, container string) {
-	// Ensure mutual exclusivity with the exec overlay.
-	a.closeExec()
 	// Cancel any in-progress stream first.
 	if a.logsCancel != nil {
 		a.logsCancel()
@@ -450,125 +433,94 @@ func (a *App) closeLogs() {
 	a.state.LogsLines = nil
 }
 
-// openExec starts a non-interactive exec command in the given pod/container
-// and shows the exec output overlay.
-func (a *App) openExec(ns, pod, container string) {
-	// Ensure mutual exclusivity with the logs overlay.
-	a.closeLogs()
-	if a.execCancel != nil {
-		a.execCancel()
-		a.execCancel = nil
+// runInteractiveExec suspends the TUI, opens a full interactive TTY shell in the
+// given pod/container, and resumes the TUI when the session ends.
+//
+// Flow:
+//  1. Suspend tcell — terminal is returned to normal (cooked) mode.
+//  2. Set stdin to raw mode so key input passes through uninterpreted.
+//  3. Create a TermSizeQueue to forward SIGWINCH to the remote PTY.
+//  4. Call ExecInteractive — blocks until the user exits the shell.
+//  5. Stop resize queue, restore terminal state.
+//  6. Resume tcell, sync, and redraw.
+func (a *App) runInteractiveExec(ns, pod, container string) {
+	// 1. Hand the terminal back to the OS.
+	if err := a.screen.Suspend(); err != nil {
+		a.state.LastErr = fmt.Errorf("exec suspend: %w", err)
+		return
 	}
 
-	execCtx, cancel := context.WithCancel(context.Background())
-	a.execCancel = cancel
-
-	a.execLines = make(chan string, 200)
-	a.state.ExecLines = nil
-	a.state.ExecOffset = 0
-	a.state.ExecAutoScroll = true
-	a.state.ExecNamespace = ns
-	a.state.ExecPod = pod
-	a.state.ExecContainer = container
-	a.state.ExecMode = true
-
-	cs := a.watcher.Clientset()
-	restCfg := a.watcher.RESTConfig()
-	ch := a.execLines
-	cmd := k8s.DefaultExecCommand()
-
-	go func() {
-		err := k8s.ExecCommand(execCtx, cs, restCfg, ns, pod, container, cmd, ch)
-		// Surface transport/RBAC errors as a visible output line.
-		if err != nil && execCtx.Err() == nil {
-			select {
-			case ch <- "── exec error: " + err.Error() + " ──":
-			default:
-			}
-		}
-	}()
-}
-
-// closeExec cancels the active exec goroutine and hides the overlay.
-func (a *App) closeExec() {
-	if a.execCancel != nil {
-		a.execCancel()
-		a.execCancel = nil
+	// 2. Raw mode — keys pass through without echo/buffering so the remote
+	//    shell receives Ctrl+C, arrow keys, etc. unmodified.
+	fd := int(os.Stdin.Fd())
+	oldState, rawErr := term.MakeRaw(fd)
+	if rawErr != nil {
+		// Non-fatal: exec continues but interactive editing may be impaired.
+		oldState = nil
 	}
-	a.execLines = nil
-	a.state.ExecMode = false
-	a.state.ExecLines = nil
-}
 
-// applyExecAction handles key events while the exec overlay is active.
-func (a *App) applyExecAction(action ui.Action) bool {
-	w, h := a.screen.Size()
-	contentH := h - 5
-	lineW := w - 6
-	totalLines := len(ui.CachedWrapExec(&a.state, lineW))
+	// 3. Resize queue — sends current size immediately, then tracks SIGWINCH.
+	resizeQ := k8s.NewTermSizeQueue()
 
-	switch action {
-	case ui.ActionQuit:
-		return true
-	case ui.ActionSearchCancel: // Esc
-		a.closeExec()
-	case ui.ActionMoveDown:
-		a.execScrollBy(1, contentH, totalLines)
-	case ui.ActionMoveUp:
-		a.execScrollBy(-1, contentH, totalLines)
-	case ui.ActionPageDown:
-		a.execScrollBy(contentH, contentH, totalLines)
-	case ui.ActionPageUp:
-		a.execScrollBy(-contentH, contentH, totalLines)
-	case ui.ActionLogsToggleScroll: // 's' — reuse same key as logs
-		a.state.ExecAutoScroll = !a.state.ExecAutoScroll
+	// 4. Block until the remote shell exits.
+	execErr := k8s.ExecInteractive(
+		a.runCtx,
+		a.watcher.Clientset(),
+		a.watcher.RESTConfig(),
+		ns, pod, container,
+		k8s.InteractiveExecCommand(),
+		os.Stdin, os.Stdout,
+		resizeQ,
+	)
+
+	// 5. Tear down resize queue, then restore terminal.
+	resizeQ.Stop()
+	if oldState != nil {
+		_ = term.Restore(fd, oldState)
 	}
-	return false
-}
 
-// execScrollBy scrolls the exec overlay by delta lines.
-// Mirrors logsScrollBy with exec-specific state fields.
-func (a *App) execScrollBy(delta, contentH, totalLines int) {
-	maxOff := totalLines - contentH
-	if maxOff < 0 {
-		maxOff = 0
+	// 6. Bring tcell back up.
+	if err := a.screen.Resume(); err != nil {
+		// Unrecoverable — the terminal is in an unknown state.
+		a.state.LastErr = fmt.Errorf("exec resume: %w", err)
+		return
 	}
-	if delta < 0 {
-		if a.state.ExecAutoScroll {
-			a.state.ExecOffset = maxOff
-			a.state.ExecAutoScroll = false
-		}
-		a.state.ExecOffset += delta
-		if a.state.ExecOffset < 0 {
-			a.state.ExecOffset = 0
-		}
-	} else {
-		a.state.ExecAutoScroll = false
-		a.state.ExecOffset += delta
-		if a.state.ExecOffset >= maxOff {
-			a.state.ExecOffset = maxOff
-			a.state.ExecAutoScroll = true
+	a.screen.Sync()
+
+	// Surface transport/RBAC errors (not normal EOF or context cancel).
+	if execErr != nil && a.runCtx.Err() == nil {
+		a.state.LastErr = fmt.Errorf("exec: %w", execErr)
+	}
+
+	// Drain any watcher updates that arrived while exec was running, then redraw.
+	for {
+		select {
+		case update := <-a.watcher.Updates():
+			a.state.ApplyUpdate(update)
+		default:
+			a.draw()
+			return
 		}
 	}
 }
 
-// handleExecOpen opens exec for the currently selected pod/container.
+// handleExecOpen starts an interactive exec for the currently selected pod.
 func (a *App) handleExecOpen() {
-	switch a.state.ActiveTab {
-	case model.TabPods: // Xray tab
+	if a.state.ActiveTab == model.TabPods { // Xray tab
 		ns, pod, container := a.xrayView.SelectedRef(a.state.Selection[model.TabPods])
 		if pod != "" {
-			a.openExec(ns, pod, container)
+			a.runInteractiveExec(ns, pod, container)
 		}
 	}
 }
 
-// handleExecOpenForDetail opens exec for the selected pod in the node-detail view.
+// handleExecOpenForDetail starts an interactive exec for the selected pod in
+// the node-detail view.
 func (a *App) handleExecOpenForDetail() {
 	pods := views.NodeDetailPods(&a.state)
 	if a.state.HeatmapDetailSel < len(pods) {
 		p := pods[a.state.HeatmapDetailSel]
-		a.openExec(p.Namespace, p.Name, "")
+		a.runInteractiveExec(p.Namespace, p.Name, "")
 	}
 }
 
@@ -935,8 +887,6 @@ func (a *App) draw() {
 	ui.DrawTabBar(a.screen, w, a.state.ActiveTab, &a.state)
 	contentRect := ui.ContentRect(w, h)
 	switch {
-	case a.state.ExecMode:
-		ui.DrawExecView(a.screen, contentRect, &a.state)
 	case a.state.LogsMode:
 		ui.DrawLogsView(a.screen, contentRect, &a.state)
 	case a.state.HeatmapNodeDetail:
