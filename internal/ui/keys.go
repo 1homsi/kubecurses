@@ -32,6 +32,7 @@ const (
 	ActionSwitchCluster     // 'c' — open the cluster/context picker
 	ActionConfirm           // Enter — confirm selection in overlays
 	ActionTab5              // '5' — jump to Heatmap tab
+	ActionExecOpen          // 'e' — exec command in selected pod/container
 )
 
 // EventToAction converts a tcell event into a logical Action for normal mode.
@@ -103,6 +104,8 @@ func EventToAction(ev tcell.Event) Action {
 		return ActionTab4
 	case '5':
 		return ActionTab5
+	case 'e':
+		return ActionExecOpen
 	}
 
 	return ActionNone

@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/1homsi/kubecurses/internal/model"
@@ -31,11 +32,12 @@ type WatcherOptions struct {
 // model.Update values on a shared channel. Supports both informer-based Watch
 // mode and periodic polling mode.
 type Watcher struct {
-	cs        *kubernetes.Clientset
-	namespace string
-	opts      WatcherOptions
-	updates   chan model.Update
-	refresh   chan struct{}
+	cs         *kubernetes.Clientset
+	restConfig *rest.Config // retained for exec (remotecommand.NewSPDYExecutor)
+	namespace  string
+	opts       WatcherOptions
+	updates    chan model.Update
+	refresh    chan struct{}
 
 	// pendingReasonsCache is keyed by namespace/name and refreshed at most once per
 	// pendingReasonsTTL. Only the pod worker goroutine touches these fields.
@@ -51,15 +53,21 @@ type Watcher struct {
 }
 
 // NewWatcher creates a Watcher. Call Start to begin.
-func NewWatcher(cs *kubernetes.Clientset, namespace string, opts WatcherOptions) *Watcher {
+// restConfig is stored for use by exec operations (remotecommand.NewSPDYExecutor);
+// pass nil to disable exec (e.g. in tests that don't need it).
+func NewWatcher(cs *kubernetes.Clientset, restConfig *rest.Config, namespace string, opts WatcherOptions) *Watcher {
 	return &Watcher{
-		cs:        cs,
-		namespace: namespace,
-		opts:      opts,
-		updates:   make(chan model.Update, updateChanCap),
-		refresh:   make(chan struct{}, 1),
+		cs:         cs,
+		restConfig: restConfig,
+		namespace:  namespace,
+		opts:       opts,
+		updates:    make(chan model.Update, updateChanCap),
+		refresh:    make(chan struct{}, 1),
 	}
 }
+
+// RESTConfig returns the underlying REST config, needed for exec operations.
+func (w *Watcher) RESTConfig() *rest.Config { return w.restConfig }
 
 // Updates returns the channel on which model.Update values are sent.
 func (w *Watcher) Updates() <-chan model.Update {

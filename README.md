@@ -101,6 +101,7 @@ kubecurses --version
 |-----|--------|
 | `j` / `k` | Navigate pods |
 | `l` | Stream logs for selected pod |
+| `e` | Exec command in selected pod |
 | `Esc` | Back to heatmap |
 
 ### Overview / Xray / other tabs
@@ -110,15 +111,16 @@ kubecurses --version
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `l` | Stream logs for selected pod / container (Xray) |
+| `e` | Exec command in selected pod / container (Xray) |
 
-### Inside the logs view
+### Inside the logs / exec view
 
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Scroll one line |
 | `PgDn` / `PgUp` | Scroll one page |
 | `s` | Toggle autoscroll (follow tail) |
-| `Esc` | Close logs |
+| `Esc` | Close overlay |
 
 ## Views
 
@@ -171,6 +173,19 @@ Navigate to the **Xray** tab (`3`), select a pod or container row, and press `l`
 - Mouse wheel scrolls the log content.
 - Press `Esc` to close.
 
+## Exec
+
+Navigate to the **Xray** tab (`3`) or open the **node detail view** (press `Enter` on a node in the Heatmap), select a pod or container row, and press `e`.
+
+A green-bordered overlay runs `id && uname -a && ls -la` inside the container via the Kubernetes exec API and streams the output into the dashboard.
+
+- Output lines are hard-wrapped to the box width.
+- Autoscroll follows output as it arrives; `s` toggles it.
+- Transport and RBAC errors appear as a visible `── exec error: … ──` line.
+- Press `Esc` to close and cancel any in-progress command.
+
+> **Note:** This is an MVP — the command is fixed and the shell is non-interactive. Full interactive PTY support (raw key passthrough, terminal resize) is planned as a follow-up.
+
 ## Cluster switching
 
 Press `c` from any tab to open the in-app context picker. Select a context and press `Enter` — kubecurses reconnects without restarting and without touching your shell's current context.
@@ -207,7 +222,8 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 
 ## Roadmap
 
-- [ ] Exec shell (`e` to open a shell in a container)
+- [x] Exec output overlay (`e` — runs a fixed command, streams output)
+- [ ] Exec interactive shell (full PTY, raw key passthrough, resize)
 - [ ] Workload grouping — pods grouped by Deployment/StatefulSet/DaemonSet
 - [ ] Persisted settings (`~/.config/kubecurses/config.yaml`)
 - [ ] Brew tap

@@ -22,7 +22,10 @@ type rowCounter interface {
 	RowCount() int
 }
 
-const maxLogLines = 5000
+const (
+	maxLogLines  = 5000
+	maxExecLines = 5000
+)
 
 // App is the top-level application struct.
 type App struct {
@@ -39,6 +42,8 @@ type App struct {
 	events         chan tcell.Event      // fed by a single long-lived goroutine
 	logLines       chan string           // fed by the active log-streaming goroutine; nil when inactive
 	logsCancel     context.CancelFunc
+	execLines      chan string         // fed by the active exec goroutine; nil when inactive
+	execCancel     context.CancelFunc
 }
 
 // New creates and initialises a new App from the given Config.
@@ -62,7 +67,7 @@ func New(cfg Config) (*App, error) {
 		}
 	}
 
-	cs, err := k8s.NewClient(k8s.ClientOptions{
+	cs, restCfg, err := k8s.NewClientAndConfig(k8s.ClientOptions{
 		KubeconfigPath: cfg.Kubeconfig,
 		ContextName:    cfg.Context,
 		RequestTimeout: cfg.RequestTimeout,
@@ -81,7 +86,7 @@ func New(cfg Config) (*App, error) {
 		EnableMetrics:   cfg.EnableMetrics,
 		MaxPods:         cfg.MaxPods,
 	}
-	watcher := k8s.NewWatcher(cs, cfg.Namespace, watcherOpts)
+	watcher := k8s.NewWatcher(cs, restCfg, cfg.Namespace, watcherOpts)
 	ov := &views.NodeOverviewView{}
 	xv := &views.XrayView{}
 	ndv := &views.NodeDetailView{}
@@ -174,6 +179,14 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			dataDraw()
 
+		case line := <-a.execLines:
+			// Append incoming exec output line; cap buffer.
+			a.state.ExecLines = append(a.state.ExecLines, line)
+			if len(a.state.ExecLines) > maxExecLines {
+				a.state.ExecLines = a.state.ExecLines[len(a.state.ExecLines)-maxExecLines:]
+			}
+			dataDraw()
+
 		case tcellEv := <-a.events:
 			if tcellEv == nil {
 				continue
@@ -203,6 +216,9 @@ func (a *App) handleEvent(ev tcell.Event) bool {
 	if a.state.HelpMode {
 		a.state.HelpMode = false
 		return false
+	}
+	if a.state.ExecMode {
+		return a.applyExecAction(ui.EventToAction(ev))
 	}
 	if a.state.LogsMode {
 		return a.applyLogsAction(ui.EventToAction(ev))
@@ -358,7 +374,7 @@ func (a *App) switchCluster(newContext string) {
 		a.watcherCancel()
 	}
 	// Build a new client for the chosen context.
-	cs, err := k8s.NewClient(k8s.ClientOptions{
+	cs, restCfg, err := k8s.NewClientAndConfig(k8s.ClientOptions{
 		KubeconfigPath: a.cfg.Kubeconfig,
 		ContextName:    newContext,
 		RequestTimeout: a.cfg.RequestTimeout,
@@ -369,6 +385,10 @@ func (a *App) switchCluster(newContext string) {
 		a.state.LastErr = fmt.Errorf("switch cluster: %w", err)
 		return
 	}
+	// Close any active exec/log overlays before swapping the watcher so
+	// their goroutines don't outlive the old connection.
+	a.closeExec()
+	a.closeLogs()
 	// Swap the watcher.
 	watcherOpts := k8s.WatcherOptions{
 		Watch:           a.cfg.Watch,
@@ -377,7 +397,7 @@ func (a *App) switchCluster(newContext string) {
 		EnableMetrics:   a.cfg.EnableMetrics,
 		MaxPods:         a.cfg.MaxPods,
 	}
-	a.watcher = k8s.NewWatcher(cs, a.cfg.Namespace, watcherOpts)
+	a.watcher = k8s.NewWatcher(cs, restCfg, a.cfg.Namespace, watcherOpts)
 	watcherCtx, watcherCancel := context.WithCancel(a.runCtx)
 	a.watcherCancel = watcherCancel
 	a.watcher.Start(watcherCtx)
@@ -392,6 +412,8 @@ func (a *App) switchCluster(newContext string) {
 
 // openLogs starts streaming logs for the given pod/container.
 func (a *App) openLogs(ns, pod, container string) {
+	// Ensure mutual exclusivity with the exec overlay.
+	a.closeExec()
 	// Cancel any in-progress stream first.
 	if a.logsCancel != nil {
 		a.logsCancel()
@@ -426,6 +448,128 @@ func (a *App) closeLogs() {
 	a.logLines = nil // nil channel never fires in select
 	a.state.LogsMode = false
 	a.state.LogsLines = nil
+}
+
+// openExec starts a non-interactive exec command in the given pod/container
+// and shows the exec output overlay.
+func (a *App) openExec(ns, pod, container string) {
+	// Ensure mutual exclusivity with the logs overlay.
+	a.closeLogs()
+	if a.execCancel != nil {
+		a.execCancel()
+		a.execCancel = nil
+	}
+
+	execCtx, cancel := context.WithCancel(context.Background())
+	a.execCancel = cancel
+
+	a.execLines = make(chan string, 200)
+	a.state.ExecLines = nil
+	a.state.ExecOffset = 0
+	a.state.ExecAutoScroll = true
+	a.state.ExecNamespace = ns
+	a.state.ExecPod = pod
+	a.state.ExecContainer = container
+	a.state.ExecMode = true
+
+	cs := a.watcher.Clientset()
+	restCfg := a.watcher.RESTConfig()
+	ch := a.execLines
+	cmd := k8s.DefaultExecCommand()
+
+	go func() {
+		err := k8s.ExecCommand(execCtx, cs, restCfg, ns, pod, container, cmd, ch)
+		// Surface transport/RBAC errors as a visible output line.
+		if err != nil && execCtx.Err() == nil {
+			select {
+			case ch <- "── exec error: " + err.Error() + " ──":
+			default:
+			}
+		}
+	}()
+}
+
+// closeExec cancels the active exec goroutine and hides the overlay.
+func (a *App) closeExec() {
+	if a.execCancel != nil {
+		a.execCancel()
+		a.execCancel = nil
+	}
+	a.execLines = nil
+	a.state.ExecMode = false
+	a.state.ExecLines = nil
+}
+
+// applyExecAction handles key events while the exec overlay is active.
+func (a *App) applyExecAction(action ui.Action) bool {
+	w, h := a.screen.Size()
+	contentH := h - 5
+	lineW := w - 6
+	totalLines := len(ui.CachedWrapExec(&a.state, lineW))
+
+	switch action {
+	case ui.ActionQuit:
+		return true
+	case ui.ActionSearchCancel: // Esc
+		a.closeExec()
+	case ui.ActionMoveDown:
+		a.execScrollBy(1, contentH, totalLines)
+	case ui.ActionMoveUp:
+		a.execScrollBy(-1, contentH, totalLines)
+	case ui.ActionPageDown:
+		a.execScrollBy(contentH, contentH, totalLines)
+	case ui.ActionPageUp:
+		a.execScrollBy(-contentH, contentH, totalLines)
+	case ui.ActionLogsToggleScroll: // 's' — reuse same key as logs
+		a.state.ExecAutoScroll = !a.state.ExecAutoScroll
+	}
+	return false
+}
+
+// execScrollBy scrolls the exec overlay by delta lines.
+// Mirrors logsScrollBy with exec-specific state fields.
+func (a *App) execScrollBy(delta, contentH, totalLines int) {
+	maxOff := totalLines - contentH
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if delta < 0 {
+		if a.state.ExecAutoScroll {
+			a.state.ExecOffset = maxOff
+			a.state.ExecAutoScroll = false
+		}
+		a.state.ExecOffset += delta
+		if a.state.ExecOffset < 0 {
+			a.state.ExecOffset = 0
+		}
+	} else {
+		a.state.ExecAutoScroll = false
+		a.state.ExecOffset += delta
+		if a.state.ExecOffset >= maxOff {
+			a.state.ExecOffset = maxOff
+			a.state.ExecAutoScroll = true
+		}
+	}
+}
+
+// handleExecOpen opens exec for the currently selected pod/container.
+func (a *App) handleExecOpen() {
+	switch a.state.ActiveTab {
+	case model.TabPods: // Xray tab
+		ns, pod, container := a.xrayView.SelectedRef(a.state.Selection[model.TabPods])
+		if pod != "" {
+			a.openExec(ns, pod, container)
+		}
+	}
+}
+
+// handleExecOpenForDetail opens exec for the selected pod in the node-detail view.
+func (a *App) handleExecOpenForDetail() {
+	pods := views.NodeDetailPods(&a.state)
+	if a.state.HeatmapDetailSel < len(pods) {
+		p := pods[a.state.HeatmapDetailSel]
+		a.openExec(p.Namespace, p.Name, "")
+	}
 }
 
 // applySearchAction handles key events while the search bar is active.
@@ -610,6 +754,13 @@ func (a *App) applyAction(action ui.Action) bool {
 			a.handleLogsOpen()
 		}
 
+	case ui.ActionExecOpen: // 'e'
+		if inDetail {
+			a.handleExecOpenForDetail()
+		} else {
+			a.handleExecOpen()
+		}
+
 	case ui.ActionSwitchCluster:
 		a.handleClusterPickerOpen()
 	}
@@ -784,6 +935,8 @@ func (a *App) draw() {
 	ui.DrawTabBar(a.screen, w, a.state.ActiveTab, &a.state)
 	contentRect := ui.ContentRect(w, h)
 	switch {
+	case a.state.ExecMode:
+		ui.DrawExecView(a.screen, contentRect, &a.state)
 	case a.state.LogsMode:
 		ui.DrawLogsView(a.screen, contentRect, &a.state)
 	case a.state.HeatmapNodeDetail:
