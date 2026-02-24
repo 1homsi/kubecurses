@@ -104,6 +104,11 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	boxW := (availW - (cols-1)*heatmapBoxGap) / cols
 	state.HeatmapCols = cols
 
+	// If total pods are dense enough to fill the viewport, prefer a compact
+	// rectangular pod grid to maximize density and reduce visual noise.
+	screenPodCap := (r.W / hexCellW) * (r.H - 3)
+	useHexPodLayout := len(state.Pods) < screenPodCap
+
 	// ── symmetric hex-cluster row plan ────────────────────────────────────────
 	plan := model.HeatmapPlanRowsMin(len(state.Nodes), cols, 2)
 	state.HeatmapRowPlan = plan
@@ -119,7 +124,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	globalBoxH := hexOverhead
 	for _, node := range state.Nodes {
 		nPods := len(nodePods[node.Name])
-		termRows := heatmapPodRows(nPods, boxW-2)
+		termRows := heatmapPodRows(nPods, boxW-2, useHexPodLayout)
 		h := termRows + hexOverhead
 		if h > globalBoxH {
 			globalBoxH = h
@@ -224,7 +229,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			if maxPerRow < 4 {
 				maxPerRow = 4
 			}
-			podPlan := model.HeatmapPlanRowsMin(len(pods), maxPerRow, 4)
+			podPlan := heatmapPodPlan(len(pods), maxPerRow, useHexPodLayout)
 			pIdx := 0
 			for hexRow, rowCells := range podPlan {
 				if pIdx >= len(pods) {
@@ -253,7 +258,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 
 // heatmapPodRows returns the number of terminal rows consumed by nPods cells
 // using the same symmetric hex-cluster plan as the pod rendering.
-func heatmapPodRows(nPods, gridW int) int {
+func heatmapPodRows(nPods, gridW int, useHex bool) int {
 	if gridW < hexCellW {
 		gridW = hexCellW
 	}
@@ -261,7 +266,30 @@ func heatmapPodRows(nPods, gridW int) int {
 	if maxPerRow < 4 {
 		maxPerRow = 4
 	}
-	return len(model.HeatmapPlanRowsMin(nPods, maxPerRow, 4))
+	return len(heatmapPodPlan(nPods, maxPerRow, useHex))
+}
+
+func heatmapPodPlan(nPods, maxPerRow int, useHex bool) []int {
+	if nPods <= 0 {
+		return nil
+	}
+	if maxPerRow < 1 {
+		maxPerRow = 1
+	}
+	if useHex {
+		return model.HeatmapPlanRowsMin(nPods, maxPerRow, 4)
+	}
+	rows := make([]int, 0, (nPods+maxPerRow-1)/maxPerRow)
+	remaining := nPods
+	for remaining > 0 {
+		cells := maxPerRow
+		if remaining < cells {
+			cells = remaining
+		}
+		rows = append(rows, cells)
+		remaining -= cells
+	}
+	return rows
 }
 
 // heatmapPodStyle returns the tcell style for a pod hex cell.
