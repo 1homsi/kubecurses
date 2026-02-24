@@ -16,12 +16,10 @@ func TestHeatmapPlanRows(t *testing.T) {
 		{name: "single node", n: 1, maxCols: 4, want: []int{1}},
 		{name: "exact single row", n: 4, maxCols: 4, want: []int{4}},
 		{name: "n < maxCols single row", n: 3, maxCols: 5, want: []int{3}},
-		{name: "n=7 perfect fit", n: 7, maxCols: 5, want: []int{2, 3, 2}},
-		{name: "n=13 perfect fit", n: 13, maxCols: 5, want: []int{4, 5, 4}},
-		{name: "n=6 tightest fit", n: 6, maxCols: 4, want: []int{2, 3, 2}},
-		{name: "n=10 three rows", n: 10, maxCols: 4, want: []int{3, 4, 3}},
-		{name: "n=19 perfect fit", n: 19, maxCols: 5, want: []int{3, 4, 5, 4, 3}},
-		{name: "n=25 square maxCols=5", n: 25, maxCols: 5, want: []int{1, 2, 3, 4, 5, 4, 3, 2, 1}},
+		{name: "n=7 compact shoulder", n: 7, maxCols: 4, want: []int{2, 3, 2}},
+		{name: "n=10 avoids pyramid", n: 10, maxCols: 4, want: []int{2, 3, 3, 2}},
+		{name: "n=12 balanced plateau", n: 12, maxCols: 4, want: []int{3, 3, 3, 3}},
+		{name: "n=19 compact smooth", n: 19, maxCols: 5, want: []int{3, 4, 5, 4, 3}},
 		{name: "n=2 two nodes", n: 2, maxCols: 4, want: []int{2}},
 	}
 	for _, tt := range tests {
@@ -45,7 +43,34 @@ func TestHeatmapPlanRows(t *testing.T) {
 					t.Errorf("HeatmapPlanRows(%d, %d): row %d width %d > maxCols", tt.n, tt.maxCols, i, r)
 				}
 			}
+			if tt.n > 1 && len(got) > 1 && got[len(got)-1] == 1 {
+				t.Errorf("HeatmapPlanRows(%d, %d): orphan last row %v", tt.n, tt.maxCols, got)
+			}
 		})
+	}
+}
+
+func TestHeatmapPlanRowsMinNodeSilhouette(t *testing.T) {
+	tests := []struct {
+		n    int
+		want []int
+	}{
+		{7, []int{2, 3, 2}},
+		{8, []int{2, 2, 2, 2}},
+		{9, []int{3, 3, 3}},
+		{10, []int{2, 3, 3, 2}},
+		{11, []int{2, 2, 3, 2, 2}},
+		{12, []int{3, 3, 3, 3}},
+		{13, []int{2, 3, 3, 3, 2}},
+		{14, []int{2, 2, 3, 3, 2, 2}},
+		{15, []int{2, 2, 2, 3, 2, 2, 2}},
+	}
+
+	for _, tt := range tests {
+		got := HeatmapPlanRowsMin(tt.n, 4, 2)
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("HeatmapPlanRowsMin(%d, 4, 2) = %v, want %v", tt.n, got, tt.want)
+		}
 	}
 }
 

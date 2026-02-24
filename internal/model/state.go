@@ -178,8 +178,10 @@ func HeatmapRowColToNode(row, col, cols int) int {
 
 // ── Symmetric hex-cluster plan helpers ────────────────────────────────────────
 
-// HeatmapPlanRowsMin is like HeatmapPlanRows but enforces a minimum row width
-// of minA. No row in the returned plan will have fewer than minA entries.
+// HeatmapPlanRowsMin returns a symmetric hex-like row plan for n items.
+// The returned plan always sums to exactly n, keeps adjacent row deltas small
+// (|delta| <= 1), and prefers a compact honeycomb silhouette over a pyramid.
+// minA is a soft hint for preferred narrow-row width (not a hard constraint).
 func HeatmapPlanRowsMin(n, maxCols, minA int) []int {
 	if n <= 0 {
 		return nil
@@ -190,40 +192,106 @@ func HeatmapPlanRowsMin(n, maxCols, minA int) []int {
 	if minA < 1 {
 		minA = 1
 	}
-	if minA > maxCols {
-		minA = maxCols
+
+	minRows := (n + maxCols - 1) / maxCols
+	if minRows < 1 {
+		minRows = 1
+	}
+	// Search a compact window first; fall back to wider if needed.
+	maxRows := minRows + 8
+	if maxRows > n {
+		maxRows = n
 	}
 
-	bestWaste := -1
-	bestRows := -1
-	bestA, bestC := minA, minA
-	for c := minA; c <= maxCols; c++ {
-		for a := c; a >= minA; a-- { // never go below minA
-			cap := heatmapHexCap(a, c)
-			if cap >= n {
-				waste := cap - n
-				rows := 2*(c-a) + 1
-				if bestWaste < 0 || waste < bestWaste || (waste == bestWaste && rows < bestRows) {
-					bestWaste = waste
-					bestRows = rows
-					bestA, bestC = a, c
+	targetRows := minRows + 1
+	if targetRows > n {
+		targetRows = n
+	}
+
+	bestScore := int(^uint(0) >> 1) // max int
+	var bestPlan []int
+
+	tryRows := func(from, to int) {
+		for rows := from; rows <= to; rows++ {
+			plan, ok := heatmapBuildBalancedPlan(n, rows, maxCols)
+			if !ok || len(plan) == 0 {
+				continue
+			}
+			edge := plan[0]
+			if n > 1 && edge == 1 {
+				continue // avoid orphan shoulders where possible
+			}
+
+			peak := plan[0]
+			for _, v := range plan {
+				if v > peak {
+					peak = v
 				}
-				break
+			}
+			centerWidth := 0
+			midL := (len(plan) - 1) / 2
+			midR := len(plan) / 2
+			for i := midL; i >= 0 && plan[i] == peak; i-- {
+				centerWidth++
+			}
+			for i := midR + 1; i < len(plan) && plan[i] == peak; i++ {
+				centerWidth++
+			}
+
+			flat := 0
+			if len(plan) > 1 && peak == edge {
+				flat = 1
+			}
+
+			softMinPenalty := 0
+			if edge < minA {
+				softMinPenalty = minA - edge
+			}
+
+			deltaPenalty := 0
+			for i := 1; i < len(plan); i++ {
+				d := plan[i] - plan[i-1]
+				if d < 0 {
+					d = -d
+				}
+				if d > 1 {
+					deltaPenalty += (d - 1) * 20
+				}
+			}
+
+			score := 0
+			score += flat * 300
+			score += (peak - edge) * 10
+			if centerWidth >= 2 {
+				// Prefer a short center plateau for smoother shoulders.
+				score += (centerWidth - 2) * 4
+			} else {
+				score += 8
+			}
+			if len(plan) > targetRows {
+				score += (len(plan) - targetRows) * 3
+			} else {
+				score += (targetRows - len(plan)) * 6
+			}
+			score += softMinPenalty * 2
+			score += deltaPenalty
+
+			if bestPlan == nil || score < bestScore {
+				bestScore = score
+				bestPlan = plan
 			}
 		}
-		if bestWaste == 0 && bestRows == 1 {
-			break
-		}
 	}
 
-	if bestWaste >= 0 {
-		return heatmapBuildPlan(bestA, bestC, 0)
+	tryRows(minRows, maxRows)
+	if bestPlan == nil {
+		// Broader fallback for pathological cases.
+		tryRows(1, n)
 	}
-
-	// n exceeds capacity — extend center with extra full-width rows.
-	pureCap := heatmapHexCap(minA, maxCols)
-	extra := (n - pureCap + maxCols - 1) / maxCols
-	return heatmapBuildPlan(minA, maxCols, extra)
+	if bestPlan != nil {
+		return bestPlan
+	}
+	return []int{n}
 }
 
 // HeatmapPlanRows returns a symmetric hex-cluster row plan for n nodes.
@@ -232,47 +300,7 @@ func HeatmapPlanRowsMin(n, maxCols, minA int) []int {
 // For very large n (exceeding any pure symmetric shape), additional center rows
 // of width maxCols are inserted between the two tapering halves.
 func HeatmapPlanRows(n, maxCols int) []int {
-	if n <= 0 {
-		return nil
-	}
-	if maxCols < 1 {
-		maxCols = 1
-	}
-
-	// Find the symmetric shape [a, a+1, …, c, …, a+1, a] with minimum waste.
-	// Tiebreak on fewer rows (larger a relative to c = less taper = flatter shape).
-	bestWaste := -1
-	bestRows := -1
-	bestA, bestC := 1, 1
-	for c := 1; c <= maxCols; c++ {
-		// Iterate a from c down to 1; stop at the first a where cap >= n.
-		for a := c; a >= 1; a-- {
-			cap := heatmapHexCap(a, c)
-			if cap >= n {
-				waste := cap - n
-				rows := 2*(c-a) + 1
-				if bestWaste < 0 || waste < bestWaste || (waste == bestWaste && rows < bestRows) {
-					bestWaste = waste
-					bestRows = rows
-					bestA, bestC = a, c
-				}
-				break
-			}
-		}
-		if bestWaste == 0 && bestRows == 1 {
-			break // single-row perfect fit — can't do better
-		}
-	}
-
-	if bestWaste >= 0 {
-		return heatmapBuildPlan(bestA, bestC, 0)
-	}
-
-	// n exceeds the capacity of any pure symmetric shape at maxCols.
-	// Extend by inserting extra full-width center rows.
-	pureCap := heatmapHexCap(1, maxCols)
-	extra := (n - pureCap + maxCols - 1) / maxCols
-	return heatmapBuildPlan(1, maxCols, extra)
+	return HeatmapPlanRowsMin(n, maxCols, 1)
 }
 
 // heatmapHexCap returns the total node capacity of shape [a, a+1, …, c, …, a+1, a].
@@ -294,6 +322,110 @@ func heatmapBuildPlan(a, c, extra int) []int {
 		rows = append(rows, w)
 	}
 	return rows
+}
+
+// heatmapBuildBalancedPlan creates an exact-sum symmetric plan with a fixed row
+// count and row deltas constrained to <= 1.
+func heatmapBuildBalancedPlan(n, rows, maxCols int) ([]int, bool) {
+	if n <= 0 || rows <= 0 || rows > n || maxCols < 1 {
+		return nil, false
+	}
+	base := n / rows
+	if base < 1 || base > maxCols {
+		return nil, false
+	}
+	rem := n - base*rows
+	plan := make([]int, rows)
+	for i := range plan {
+		plan[i] = base
+	}
+
+	for rem > 0 {
+		progressed := false
+
+		// Center row first (odd row counts only).
+		if rows%2 == 1 {
+			c := rows / 2
+			if rem > 0 && heatmapCanIncSym(plan, c, c, maxCols) {
+				plan[c]++
+				rem--
+				progressed = true
+				if rem == 0 {
+					break
+				}
+			}
+		}
+
+		// Then grow shoulders from the center outwards in mirrored pairs.
+		maxDist := rows / 2
+		for d := 0; d < maxDist && rem >= 2; d++ {
+			l := (rows-1)/2 - d
+			r := rows/2 + d
+			if l == r {
+				continue
+			}
+			if heatmapCanIncSym(plan, l, r, maxCols) {
+				plan[l]++
+				plan[r]++
+				rem -= 2
+				progressed = true
+			}
+		}
+
+		if !progressed {
+			return nil, false
+		}
+	}
+
+	for i := 1; i < len(plan); i++ {
+		d := plan[i] - plan[i-1]
+		if d < 0 {
+			d = -d
+		}
+		if d > 1 {
+			return nil, false
+		}
+		if plan[i] > maxCols {
+			return nil, false
+		}
+	}
+	if plan[0] < 1 || plan[len(plan)-1] < 1 {
+		return nil, false
+	}
+	return plan, true
+}
+
+func heatmapCanIncSym(plan []int, l, r, maxCols int) bool {
+	if l < 0 || r < 0 || l >= len(plan) || r >= len(plan) {
+		return false
+	}
+	tmp := make([]int, len(plan))
+	copy(tmp, plan)
+
+	tmp[l]++
+	if l != r {
+		tmp[r]++
+	}
+	if tmp[l] > maxCols || tmp[r] > maxCols {
+		return false
+	}
+	// Preserve smooth shoulders.
+	for i := 1; i < len(tmp); i++ {
+		d := tmp[i] - tmp[i-1]
+		if d < 0 {
+			d = -d
+		}
+		if d > 1 {
+			return false
+		}
+	}
+	// Preserve symmetry.
+	for i := 0; i < len(tmp)/2; i++ {
+		if tmp[i] != tmp[len(tmp)-1-i] {
+			return false
+		}
+	}
+	return true
 }
 
 // HeatmapNodeToRowColPlan converts a flat node index to (row, col) using a plan.

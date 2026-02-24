@@ -12,6 +12,7 @@ import (
 
 // hexCellW is the column width of one pod cell: ⬢ glyph (1 col) + 1 space gap.
 const hexCellW = 2
+const heatmapBoxGap = 1
 
 var (
 	hexChar      = "⬢"
@@ -91,16 +92,20 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	}
 	cols := 1
 	for _, c := range []int{8, 7, 6, 5, 4, 3, 2, 1} {
-		if availW/c >= minBoxW {
+		w := availW - (c-1)*heatmapBoxGap
+		if w < c {
+			continue
+		}
+		if w/c >= minBoxW {
 			cols = c
 			break
 		}
 	}
-	boxW := availW / cols
+	boxW := (availW - (cols-1)*heatmapBoxGap) / cols
 	state.HeatmapCols = cols
 
 	// ── symmetric hex-cluster row plan ────────────────────────────────────────
-	plan := model.HeatmapPlanRowsMin(len(state.Nodes), cols, 4)
+	plan := model.HeatmapPlanRowsMin(len(state.Nodes), cols, 2)
 	state.HeatmapRowPlan = plan
 	nBoxRows := len(plan)
 
@@ -127,10 +132,14 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		boxRowH[i] = globalBoxH
 	}
 
-	// Cumulative y — zero gap between rows so hex caps interlock like a real honeycomb.
-	boxRowY := make([]int, nBoxRows+1)
-	for i, h := range boxRowH {
-		boxRowY[i+1] = boxRowY[i] + h
+	// Tighten vertical composition by overlapping one terminal row between box rows.
+	rowStep := globalBoxH - 1
+	if rowStep < 1 {
+		rowStep = 1
+	}
+	boxRowTop := make([]int, nBoxRows+1)
+	for i := 0; i < nBoxRows; i++ {
+		boxRowTop[i+1] = boxRowTop[i] + rowStep
 	}
 
 	// ── scroll: keep selected node visible ────────────────────────────────────
@@ -146,7 +155,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		scroll = selBoxRow
 	}
 	for scroll < selBoxRow {
-		if boxRowY[selBoxRow]-boxRowY[scroll]+boxRowH[selBoxRow] <= availH {
+		if boxRowTop[selBoxRow]-boxRowTop[scroll]+boxRowH[selBoxRow] <= availH {
 			break
 		}
 		scroll++
@@ -154,18 +163,16 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	state.HeatmapScroll = scroll
 
 	// ── render ────────────────────────────────────────────────────────────────
-	y := r.Y
-	curBoxRow := scroll
-	for curBoxRow < nBoxRows {
-		if y >= r.Y+availH {
+	for curBoxRow := scroll; curBoxRow < nBoxRows; curBoxRow++ {
+		y := r.Y + (boxRowTop[curBoxRow] - boxRowTop[scroll])
+		if y+globalBoxH > r.Y+availH {
 			break
 		}
 
 		rowN := plan[curBoxRow]
 		// Center each row horizontally — symmetric hex-cluster layout.
-		rowW := rowN * boxW
+		rowW := rowN*boxW + (rowN-1)*heatmapBoxGap
 		nodeXBase := r.X + (availW-rowW)/2
-		rowMaxH := boxRowH[curBoxRow]
 
 		for col := 0; col < rowN; col++ {
 			nodeIdx := model.HeatmapRowColToNodePlan(plan, curBoxRow, col)
@@ -173,7 +180,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 				break
 			}
 
-			x := nodeXBase + col*boxW
+			x := nodeXBase + col*(boxW+heatmapBoxGap)
 			node := state.Nodes[nodeIdx]
 			pods := nodePods[node.Name]
 			gridW := boxW - 2
@@ -236,8 +243,6 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			}
 		}
 
-		y += rowMaxH
-		curBoxRow++
 	}
 
 	// ── legend — always pinned to the bottom of the viewport ─────────────────
