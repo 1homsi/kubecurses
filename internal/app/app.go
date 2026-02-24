@@ -61,6 +61,10 @@ func New(cfg Config) (*App, error) {
 				return nil, ErrCancelled
 			}
 			cfg.Context = chosen
+			// Persist immediately so kubectl sees the chosen context.
+			if chosen != current {
+				_ = k8s.PersistCurrentContext(cfg.Kubeconfig, chosen)
+			}
 		}
 	}
 
@@ -352,8 +356,15 @@ func (a *App) applyPickerAction(action ui.Action) bool {
 
 // switchCluster reconnects to a different Kubernetes context without restarting Run.
 func (a *App) switchCluster(newContext string) {
+	// Always persist the chosen context so kubectl sees the same cluster after
+	// kubecurses exits — even when we're already connected (e.g. re-confirming the
+	// current context after a startup-picker selection that wasn't yet persisted).
+	if err := k8s.PersistCurrentContext(a.cfg.Kubeconfig, newContext); err != nil {
+		a.state.LastErr = fmt.Errorf("persist context: %w", err)
+	}
+
 	if newContext == a.cfg.Context {
-		return // already connected
+		return // already connected, no reconnect needed
 	}
 	// Stop existing watcher goroutines.
 	if a.watcherCancel != nil {
@@ -393,11 +404,6 @@ func (a *App) switchCluster(newContext string) {
 	a.state.Nodes = nil
 	a.state.Namespaces = nil
 	a.state.Deployments = nil
-
-	// Persist the new current-context so kubectl sees it after kubecurses exits.
-	if err := k8s.PersistCurrentContext(a.cfg.Kubeconfig, newContext); err != nil {
-		a.state.LastErr = fmt.Errorf("persist context: %w", err)
-	}
 }
 
 // openLogs starts streaming logs for the given pod/container.
