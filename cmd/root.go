@@ -12,6 +12,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/1homsi/kubecurses/internal/app"
+	"github.com/1homsi/kubecurses/internal/ui"
 )
 
 // Execute parses flags and runs the application.
@@ -23,6 +24,7 @@ func Execute(version, commit, buildDate string) {
 	cfg := app.DefaultConfig()
 
 	showVersion := flag.Bool("version", false, "print version and exit")
+	theme := flag.String("theme", "auto", "color theme: auto, dark, or light")
 	flag.StringVar(&cfg.Kubeconfig, "kubeconfig", "", "path to kubeconfig file (default: $KUBECONFIG or ~/.kube/config)")
 	flag.StringVar(&cfg.Context, "context", "", "kubernetes context to use")
 	flag.StringVar(&cfg.Namespace, "namespace", "", "namespace to filter (default: all namespaces)")
@@ -40,6 +42,8 @@ func Execute(version, commit, buildDate string) {
 	flag.Parse()
 
 	cfg.KubeAPIQPS = float32(kubeAPIQPS)
+
+	ui.InitTheme(*theme)
 
 	if *showVersion {
 		fmt.Printf("kubecurses %s\ncommit:    %s\nbuilt:     %s\n", version, commit, buildDate)

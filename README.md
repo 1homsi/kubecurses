@@ -207,6 +207,7 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 | `--enable-metrics` | `false` | Enable metrics-server calls |
 | `--max-pods` | `0` (unlimited) | Cap pods shown per refresh |
 | `--no-icons` | `false` | Plain ASCII fallbacks instead of Unicode icons |
+| `--theme` | `auto` | Color theme: `auto` (detect from system), `dark`, or `light` |
 | `--log-lines` | `200` | Log tail line count |
 | `--version` | — | Print version and exit |
 
