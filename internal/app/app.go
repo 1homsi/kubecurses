@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
-	"golang.org/x/term"
 
 	"github.com/1homsi/kubecurses/internal/k8s"
 	"github.com/1homsi/kubecurses/internal/model"
@@ -444,16 +444,18 @@ func (a *App) closeLogs() {
 	a.state.LogsLines = nil
 }
 
-// runInteractiveExec suspends the TUI, opens a full interactive TTY shell in the
-// given pod/container, and resumes the TUI when the session ends.
+// runInteractiveExec suspends the TUI, delegates to `kubectl exec -it` for the
+// actual shell session, then resumes the TUI when the session ends.
+//
+// Delegating to kubectl guarantees the exact same authentication flow the user
+// gets from their terminal: kubectl refreshes the exec-auth-plugin token on
+// every invocation, respects AWS_PROFILE / assumed roles in the kubeconfig, and
+// handles raw-mode setup, SIGWINCH forwarding, and PTY teardown internally.
 //
 // Flow:
 //  1. Suspend tcell — terminal is returned to normal (cooked) mode.
-//  2. Set stdin to raw mode so key input passes through uninterpreted.
-//  3. Create a TermSizeQueue to forward SIGWINCH to the remote PTY.
-//  4. Call ExecInteractive — blocks until the user exits the shell.
-//  5. Stop resize queue, restore terminal state.
-//  6. Resume tcell, sync, and redraw.
+//  2. Run `kubectl exec -it` with stdin/stdout/stderr wired to the real terminal.
+//  3. Resume tcell, sync, and redraw.
 func (a *App) runInteractiveExec(ns, pod, container string) {
 	// 1. Hand the terminal back to the OS.
 	if err := a.screen.Suspend(); err != nil {
@@ -461,46 +463,39 @@ func (a *App) runInteractiveExec(ns, pod, container string) {
 		return
 	}
 
-	// 2. Raw mode — keys pass through without echo/buffering so the remote
-	//    shell receives Ctrl+C, arrow keys, etc. unmodified.
-	fd := int(os.Stdin.Fd())
-	oldState, rawErr := term.MakeRaw(fd)
-	if rawErr != nil {
-		// Non-fatal: exec continues but interactive editing may be impaired.
-		oldState = nil
+	// 2. Build and run `kubectl exec -it <pod> -n <ns> [--context …] [--kubeconfig …] [-c <container>] -- /bin/sh`.
+	args := []string{"exec", "-it", pod, "-n", ns}
+	if a.cfg.Context != "" {
+		args = append(args, "--context", a.cfg.Context)
 	}
-
-	// 3. Resize queue — sends current size immediately, then tracks SIGWINCH.
-	resizeQ := k8s.NewTermSizeQueue()
-
-	// 4. Block until the remote shell exits.
-	execErr := k8s.ExecInteractive(
-		a.runCtx,
-		a.watcher.Clientset(),
-		a.watcher.RESTConfig(),
-		ns, pod, container,
-		k8s.InteractiveExecCommand(),
-		os.Stdin, os.Stdout,
-		resizeQ,
-	)
-
-	// 5. Tear down resize queue, then restore terminal.
-	resizeQ.Stop()
-	if oldState != nil {
-		_ = term.Restore(fd, oldState)
+	if a.cfg.Kubeconfig != "" {
+		args = append(args, "--kubeconfig", a.cfg.Kubeconfig)
 	}
+	if container != "" {
+		args = append(args, "-c", container)
+	}
+	args = append(args, "--", "/bin/sh")
 
-	// 6. Bring tcell back up.
+	cmd := exec.Command("kubectl", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	execErr := cmd.Run()
+
+	// 3. Bring tcell back up.
 	if err := a.screen.Resume(); err != nil {
-		// Unrecoverable — the terminal is in an unknown state.
 		a.state.LastErr = fmt.Errorf("exec resume: %w", err)
 		return
 	}
 	a.screen.Sync()
 
-	// Surface transport/RBAC errors (not normal EOF or context cancel).
+	// Surface unexpected errors; normal shell exit (exit code ≥ 1) is not an error.
 	if execErr != nil && a.runCtx.Err() == nil {
-		a.state.LastErr = fmt.Errorf("exec: %w", execErr)
+		var exitErr *exec.ExitError
+		if !errors.As(execErr, &exitErr) {
+			a.state.LastErr = fmt.Errorf("exec: %w", execErr)
+		}
 	}
 
 	// Drain any watcher updates that arrived while exec was running, then redraw.
