@@ -218,6 +218,19 @@ func (v *NodeOverviewView) drawHeader(s *ui.Screen, x, y, w int) {
 // RowCount returns the current number of display rows.
 func (v *NodeOverviewView) RowCount() int { return len(v.rows) }
 
+// SelectedPodRef returns the namespace and pod name for the row at idx.
+// Returns ("", "") when idx is out of range or the row is not a pod row.
+func (v *NodeOverviewView) SelectedPodRef(idx int) (ns, pod string) {
+	if idx < 0 || idx >= len(v.rows) {
+		return "", ""
+	}
+	row := v.rows[idx]
+	if row.kind != rkPod {
+		return "", ""
+	}
+	return row.pod.Namespace, row.pod.Name
+}
+
 func (v *NodeOverviewView) drawRow(s *ui.Screen, x, y, w int, row ovRow, selected bool) {
 	switch row.kind {
 	case rkNode:
