@@ -680,6 +680,8 @@ func (a *App) applyAction(action ui.Action) bool {
 				a.state.HeatmapDetailSel = 0
 				a.state.HeatmapNodeDetail = true
 			}
+		} else if a.state.ActiveTab == model.TabNamespaces {
+			a.drillIntoNamespace()
 		}
 
 	case ui.ActionSearchCancel: // Esc
@@ -723,6 +725,20 @@ func (a *App) applyAction(action ui.Action) bool {
 		a.handleClusterPickerOpen()
 	}
 	return false
+}
+
+// drillIntoNamespace filters the Xray view to the selected namespace and
+// navigates to it so the user sees all pods/containers in that namespace.
+func (a *App) drillIntoNamespace() {
+	sel := a.state.Selection[model.TabNamespaces]
+	name := views.SelectedNamespace(sel, &a.state)
+	if name == "" {
+		return
+	}
+	a.state.SearchQuery = name
+	a.state.SearchMode = false
+	a.state.Selection[model.TabPods] = 0
+	a.state.SetTab(model.TabPods)
 }
 
 // handleClusterPickerOpen fetches available contexts and opens the in-app picker.

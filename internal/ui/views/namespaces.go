@@ -20,6 +20,16 @@ func (v *NamespacesView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 	v.scrollOffset = ui.DrawTable(s, r, m, sel, v.scrollOffset)
 }
 
+// SelectedNamespace returns the name of the filtered namespace at index sel.
+// Returns "" when sel is out of range.
+func SelectedNamespace(sel int, state *model.AppState) string {
+	nss := filterNamespaces(state)
+	if sel < 0 || sel >= len(nss) {
+		return ""
+	}
+	return nss[sel].Name
+}
+
 func filterNamespaces(state *model.AppState) []model.Namespace {
 	q := strings.ToLower(state.SearchQuery)
 	out := make([]model.Namespace, 0, len(state.Namespaces))
