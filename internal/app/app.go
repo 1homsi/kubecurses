@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -19,11 +21,6 @@ import (
 // ErrCancelled is returned when the user quits the context picker.
 var ErrCancelled = errors.New("cancelled")
 
-// rowCounter is satisfied by any overview view that can report its row count.
-type rowCounter interface {
-	RowCount() int
-}
-
 const maxLogLines = 5000
 
 // App is the top-level application struct.
@@ -35,8 +32,8 @@ type App struct {
 	watcherCancel  context.CancelFunc // cancels only the watcher goroutines (not Run itself)
 	runCtx         context.Context    // Run()'s context, used when restarting the watcher
 	views          [5]views.View
-	nodeOverview   rowCounter            // kept for RowCount access; swap impl to change overview style
-	xrayView       *views.XrayView       // typed for SelectedRef access
+	nodeOverview     *views.NodeOverviewView // typed for RowCount + SelectedPodRef
+	xrayView         *views.XrayView        // typed for SelectedRef access
 	nodeDetailView *views.NodeDetailView // heatmap node drill-down
 	events         chan tcell.Event      // fed by a single long-lived goroutine
 	logLines       chan string           // fed by the active log-streaming goroutine; nil when inactive
@@ -93,11 +90,11 @@ func New(cfg Config) (*App, error) {
 	ndv := &views.NodeDetailView{}
 
 	app := &App{
-		cfg:            cfg,
-		screen:         scr,
-		watcher:        watcher,
-		nodeOverview:   ov,
-		xrayView:       xv,
+		cfg:          cfg,
+		screen:       scr,
+		watcher:      watcher,
+		nodeOverview: ov,
+		xrayView:     xv,
 		nodeDetailView: ndv,
 		state: model.AppState{
 			Namespace:      cfg.Namespace,
@@ -476,10 +473,13 @@ func (a *App) runInteractiveExec(ns, pod, container string) {
 	}
 	args = append(args, "--", "/bin/sh")
 
+	// Tee stderr to both the terminal (so the user sees errors live) and a
+	// buffer so we can surface the message in the status bar after tcell resumes.
+	var stderrBuf strings.Builder
 	cmd := exec.Command("kubectl", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 
 	execErr := cmd.Run()
 
@@ -490,12 +490,15 @@ func (a *App) runInteractiveExec(ns, pod, container string) {
 	}
 	a.screen.Sync()
 
-	// Surface unexpected errors; normal shell exit (exit code ≥ 1) is not an error.
+	// Surface errors in the status bar. A non-zero exit from kubectl (e.g.
+	// RBAC forbidden, pod not found) is captured from stderr so the message
+	// persists after tcell redraws over the terminal output.
 	if execErr != nil && a.runCtx.Err() == nil {
-		var exitErr *exec.ExitError
-		if !errors.As(execErr, &exitErr) {
-			a.state.LastErr = fmt.Errorf("exec: %w", execErr)
+		msg := strings.TrimSpace(stderrBuf.String())
+		if msg == "" {
+			msg = execErr.Error()
 		}
+		a.state.LastErr = fmt.Errorf("exec: %s", msg)
 	}
 
 	// Drain any watcher updates that arrived while exec was running, then redraw.
@@ -512,10 +515,16 @@ func (a *App) runInteractiveExec(ns, pod, container string) {
 
 // handleExecOpen starts an interactive exec for the currently selected pod.
 func (a *App) handleExecOpen() {
-	if a.state.ActiveTab == model.TabPods { // Xray tab
+	switch a.state.ActiveTab {
+	case model.TabPods: // Xray
 		ns, pod, container := a.xrayView.SelectedRef(a.state.Selection[model.TabPods])
 		if pod != "" {
 			a.runInteractiveExec(ns, pod, container)
+		}
+	case model.TabNodeOverview: // Overview
+		ns, pod := a.nodeOverview.SelectedPodRef(a.state.Selection[model.TabNodeOverview])
+		if pod != "" {
+			a.runInteractiveExec(ns, pod, "")
 		}
 	}
 }
@@ -747,10 +756,15 @@ func (a *App) handleClusterPickerOpen() {
 // handleLogsOpen opens logs for the currently selected pod/container.
 func (a *App) handleLogsOpen() {
 	switch a.state.ActiveTab {
-	case model.TabPods: // Xray tab
+	case model.TabPods: // Xray
 		ns, pod, container := a.xrayView.SelectedRef(a.state.Selection[model.TabPods])
 		if pod != "" {
 			a.openLogs(ns, pod, container)
+		}
+	case model.TabNodeOverview: // Overview
+		ns, pod := a.nodeOverview.SelectedPodRef(a.state.Selection[model.TabNodeOverview])
+		if pod != "" {
+			a.openLogs(ns, pod, "")
 		}
 	}
 }
