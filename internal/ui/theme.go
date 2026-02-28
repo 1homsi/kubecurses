@@ -140,9 +140,8 @@ func ApplyLightTheme() {
 	StyleHeatmapTerm = tcell.StyleDefault.Foreground(colorDim).Background(colorBg)
 	StyleHeatmapDefault = tcell.StyleDefault.Foreground(colorBlue).Background(colorBg)
 	StyleHeatmapNodeSel = tcell.StyleDefault.
-		Foreground(tcell.NewRGBColor(180, 130, 0)).
-		Background(colorBg).
-		Bold(true)
+		Background(tcell.NewRGBColor(160, 110, 0)).
+		Foreground(colorBg)
 
 	// ── logs overlay private styles (logsview.go) ────────────────────────
 	logsBg := tcell.NewRGBColor(215, 220, 240)

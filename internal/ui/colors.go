@@ -189,9 +189,8 @@ var (
 				Foreground(colorBlue).
 				Background(colorBg)
 
-	// Selected node box — golden border so the active node stands out.
+	// Selected node box — amber background on perimeter cells so the ring glows.
 	StyleHeatmapNodeSel = tcell.StyleDefault.
-				Foreground(tcell.NewRGBColor(255, 220, 50)).
-				Background(colorBg).
-				Bold(true)
+				Background(tcell.NewRGBColor(200, 150, 0)).
+				Foreground(colorBg)
 )

@@ -192,12 +192,14 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			isSelected := nodeIdx == sel
 			nH := globalBoxH
 
-			// hexagonal border
-			borderStyle := ui.StyleNodeHeader
+			// ── filled hex mask ───────────────────────────────────────────────
+			// Interior: solid colorNodeBg fill defines the hex shape.
+			// Perimeter: same fill normally; golden/amber ring when selected.
+			perimStyle := ui.StyleNodeHeader // seamless with fill when not selected
 			if isSelected {
-				borderStyle = ui.StyleHeatmapNodeSel
+				perimStyle = ui.StyleHeatmapNodeSel // amber background ring
 			}
-			ui.DrawHexBorder(s, x, y, boxW, nH, borderStyle)
+			ui.DrawHexFill(s, x, y, boxW, nH, ui.StyleNodeHeader, perimStyle)
 
 			// Title on the last shoulder row (y+numTaper-1) — no wasted body row.
 			titleY := y + numTaper - 1
@@ -205,7 +207,7 @@ func (v *HeatmapView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			if node.Status != "Ready" {
 				dotStyle = ui.StyleNodeNotReadyDot
 			}
-			s.DrawText(x+2, titleY, borderStyle, "●")
+			s.DrawText(x+2, titleY, ui.StyleNodeHeader, "●")
 			s.DrawText(x+3, titleY, dotStyle, "●")
 
 			nameMaxW := boxW - 7
