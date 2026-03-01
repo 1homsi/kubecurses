@@ -23,7 +23,7 @@ func (v *NodesView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 }
 
 func filterNodes(state *model.AppState) []model.Node {
-	q := strings.ToLower(state.SearchQuery)
+	q := strings.ToLower(state.SearchQuery[model.TabNodeOverview])
 	if q == "" {
 		return state.Nodes
 	}

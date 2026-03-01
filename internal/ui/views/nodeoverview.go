@@ -15,10 +15,10 @@ import (
 type rowKind int
 
 const (
-	rkPod     rowKind = iota
-	rkNode            // node section header
-	rkReason         // pending-pod explainer sub-row
-	rkWarning         // scheduling imbalance banner
+	rkPod    rowKind = iota
+	rkNode
+	rkReason
+	rkWarning
 )
 
 // ovRow is a flat display row.
@@ -32,10 +32,11 @@ type ovRow struct {
 
 // ovCacheKey groups all inputs that affect the row model.
 type ovCacheKey struct {
-	podGen  uint64
-	nodeGen uint64
-	query   string
-	ns      string
+	podGen   uint64
+	nodeGen  uint64
+	query    string
+	ns       string
+	nsFilter string
 }
 
 // NodeOverviewView renders nodes as section headers with their pods nested below.
@@ -75,6 +76,9 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 
 	for _, p := range state.Pods {
 		if state.Namespace != "" && p.Namespace != state.Namespace {
+			continue
+		}
+		if state.NamespaceFilter != "" && p.Namespace != state.NamespaceFilter {
 			continue
 		}
 		if query != "" && !podMatchesQuery(p, query) {
@@ -159,9 +163,9 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 }
 
 func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
-	key := ovCacheKey{state.PodGeneration, state.NodeGeneration, state.SearchQuery, state.Namespace}
+	key := ovCacheKey{state.PodGeneration, state.NodeGeneration, state.SearchQuery[model.TabNodeOverview], state.Namespace, state.NamespaceFilter}
 	if !v.cacheValid || key != v.cacheKey {
-		v.cachedRows = v.buildRows(state, state.SearchQuery)
+		v.cachedRows = v.buildRows(state, state.SearchQuery[model.TabNodeOverview])
 		v.cacheKey = key
 		v.cacheValid = true
 	}
@@ -270,6 +274,18 @@ func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, 
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', base)
 	s.DrawText(x,          y, dotStyle,    "●")
 	s.DrawText(x+4,        y, nameStyle,   fmt.Sprintf("%-*s", nameW, truncate(n.Name, nameW)))
+	if len(n.Taints) > 0 {
+		badge := fmt.Sprintf("⚑%d", len(n.Taints))
+		badgeStyle := styleTaintBadge
+		if selected {
+			badgeStyle = nameStyle
+		}
+		badgeLen := len([]rune(badge))
+		badgeX := x + 4 + nameW - badgeLen
+		if badgeX > x+4+1 {
+			s.DrawText(badgeX, y, badgeStyle, badge)
+		}
+	}
 	s.DrawText(x+statusAt, y, statusStyle, fmt.Sprintf("%-10s", n.Status))
 	s.DrawText(x+ageAt,    y, metaStyle,   formatDuration(n.Age))
 
@@ -300,6 +316,26 @@ func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, 
 	} else {
 		s.DrawText(x+4+nameW, y, metaStyle, fmt.Sprintf("%-*s", nsW, truncate(n.Version, nsW)))
 	}
+}
+
+var styleTaintBadge = tcell.StyleDefault.
+	Foreground(tcell.NewRGBColor(210, 160, 50)).
+	Background(tcell.NewRGBColor(22, 26, 46))
+
+// SelectedRef returns the kind, namespace, and name for the row at idx.
+// kind is "pod" or "node"; ns is empty for nodes.
+func (v *NodeOverviewView) SelectedRef(idx int) (kind, ns, name string) {
+	if idx < 0 || idx >= len(v.rows) {
+		return "", "", ""
+	}
+	row := v.rows[idx]
+	switch row.kind {
+	case rkPod:
+		return "pod", row.pod.Namespace, row.pod.Name
+	case rkNode:
+		return "node", "", row.node.Name
+	}
+	return "", "", ""
 }
 
 // metricStyle returns a colour-coded style for a percentage value.

@@ -12,8 +12,12 @@ import (
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
-// convertPod converts a corev1.Pod to a model.Pod using the given time as "now".
 func convertPod(p corev1.Pod, now time.Time) model.Pod {
+	specByName := make(map[string]corev1.Container, len(p.Spec.Containers))
+	for _, c := range p.Spec.Containers {
+		specByName[c.Name] = c
+	}
+
 	ready, total := 0, len(p.Status.ContainerStatuses)
 	var restarts int32
 	containers := make([]model.Container, 0, total)
@@ -24,23 +28,54 @@ func convertPod(p corev1.Pod, now time.Time) model.Pod {
 		restarts += cs.RestartCount
 
 		cStatus := "Running"
+		var cMessage string
 		if cs.State.Waiting != nil {
 			cStatus = cs.State.Waiting.Reason
 			if cStatus == "" {
 				cStatus = "Waiting"
+			}
+			if cs.State.Waiting.Message != "" {
+				cMessage = cs.State.Waiting.Message
+				if len([]rune(cMessage)) > 120 {
+					cMessage = string([]rune(cMessage)[:120])
+				}
 			}
 		} else if cs.State.Terminated != nil {
 			cStatus = cs.State.Terminated.Reason
 			if cStatus == "" {
 				cStatus = "Terminated"
 			}
+			if cs.State.Terminated.Message != "" {
+				cMessage = cs.State.Terminated.Message
+				if len([]rune(cMessage)) > 120 {
+					cMessage = string([]rune(cMessage)[:120])
+				}
+			}
 		}
-		containers = append(containers, model.Container{
+
+		c := model.Container{
 			Name:     cs.Name,
 			Ready:    cs.Ready,
 			Restarts: cs.RestartCount,
 			Status:   cStatus,
-		})
+			Message:  cMessage,
+		}
+		if spec, ok := specByName[cs.Name]; ok {
+			c.Image = spec.Image
+			if r, ok2 := spec.Resources.Requests[corev1.ResourceCPU]; ok2 {
+				c.CPURequestM = r.MilliValue()
+			}
+			if r, ok2 := spec.Resources.Limits[corev1.ResourceCPU]; ok2 {
+				c.CPULimitM = r.MilliValue()
+			}
+			if r, ok2 := spec.Resources.Requests[corev1.ResourceMemory]; ok2 {
+				c.MemRequestMi = r.Value() / (1024 * 1024)
+			}
+			if r, ok2 := spec.Resources.Limits[corev1.ResourceMemory]; ok2 {
+				c.MemLimitMi = r.Value() / (1024 * 1024)
+			}
+		}
+		containers = append(containers, c)
 	}
 	return model.Pod{
 		Namespace:  p.Namespace,
@@ -69,8 +104,6 @@ func FetchPods(ctx context.Context, cs *kubernetes.Clientset, namespace string) 
 	return pods, nil
 }
 
-// podEffectiveStatus returns a human-readable status string that reflects real pod
-// state beyond just Phase — detects Terminating, CrashLoopBackOff, OOMKilled, etc.
 func podEffectiveStatus(p corev1.Pod) string {
 	if p.DeletionTimestamp != nil {
 		return "Terminating"

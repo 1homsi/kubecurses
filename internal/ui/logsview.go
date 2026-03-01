@@ -57,6 +57,61 @@ func WrapLines(lines []string, maxW int) []string {
 	return result
 }
 
+// DrawDescribeOverlay renders a scrollable describe output box within r.
+func DrawDescribeOverlay(s *Screen, r Rect, state *model.AppState) {
+	if r.W < 4 || r.H < 4 {
+		return
+	}
+	for i := 1; i < r.H-1; i++ {
+		s.FillRect(Rect{X: r.X + 1, Y: r.Y + i, W: r.W - 2, H: 1}, ' ', styleLogsLine)
+	}
+	drawBorderOnly(s, r.X, r.Y, r.W, r.H, styleLogsBorder)
+
+	title := " " + state.DescribeTitle + " "
+	titleX := r.X + (r.W-len([]rune(title)))/2
+	if titleX < r.X+1 {
+		titleX = r.X + 1
+	}
+	s.DrawTextTrunc(titleX, r.Y, r.W-2, styleLogsTitle, title)
+
+	hintY := r.Y + 1
+	s.FillRect(Rect{X: r.X + 1, Y: hintY, W: r.W - 2, H: 1}, ' ', styleLogsHint)
+	lineCountText := fmt.Sprintf("  %d lines  ", len(state.DescribeLines))
+	lineCountX := r.X + r.W - 1 - len([]rune(lineCountText))
+	if lineCountX > r.X+6 {
+		s.DrawText(lineCountX, hintY, styleLogsHint, lineCountText)
+		hintText := "  j/k: scroll  PgDn/PgUp: page  Esc: close"
+		hintW := lineCountX - (r.X + 2) - 1
+		s.DrawTextTrunc(r.X+2, hintY, hintW, styleLogsHint, hintText)
+	}
+
+	contentH := r.H - 3
+	if contentH < 1 {
+		return
+	}
+	lineW := r.W - 6
+	offset := state.DescribeOffset
+	maxOff := len(state.DescribeLines) - contentH
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if offset > maxOff {
+		offset = maxOff
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	for i := 0; i < contentH; i++ {
+		idx := offset + i
+		if idx >= len(state.DescribeLines) {
+			break
+		}
+		y := r.Y + 2 + i
+		s.DrawText(r.X+2, y, styleLogsMarker, "▸ ")
+		s.DrawTextTrunc(r.X+4, y, lineW, styleLogsLine, state.DescribeLines[idx])
+	}
+}
+
 // DrawLogsView renders a bordered log streaming box within the content rect r.
 // Layout inside the box:
 //

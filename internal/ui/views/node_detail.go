@@ -3,6 +3,7 @@ package views
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -89,15 +90,24 @@ func (v *NodeDetailView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		s.DrawTextTrunc(r.X+r.W-len([]rune(met))-1, titleY, len([]rune(met)), ui.StyleNodeMeta, met)
 	}
 
+	// ── Taints ────────────────────────────────────────────────────────────────
+	taintsY := r.Y + 1
+	if selNode != nil && len(selNode.Taints) > 0 {
+		s.FillRect(ui.Rect{X: r.X, Y: taintsY, W: r.W, H: 1}, ' ', ui.StyleDefault)
+		s.DrawTextTrunc(r.X+2, taintsY, r.W-4, ui.StyleDim, "Taints: "+strings.Join(selNode.Taints, ", "))
+	} else {
+		s.FillRect(ui.Rect{X: r.X, Y: taintsY, W: r.W, H: 1}, ' ', ui.StyleDefault)
+	}
+
 	// ── Column headers ────────────────────────────────────────────────────────
-	hdrY := r.Y + 1
+	hdrY := r.Y + 2
 	s.DrawTextTrunc(r.X, hdrY, r.W, ui.StyleHeader,
 		fmt.Sprintf("  %-5s %-*s %-20s %8s %8s",
 			"", nameColW(r.W), "POD", "NAMESPACE", "RESTARTS", "AGE"))
 
 	// ── Pod rows ──────────────────────────────────────────────────────────────
-	contentTop := r.Y + 2
-	contentH := r.H - 4 // header + col-hdr + hint + status
+	contentTop := r.Y + 3
+	contentH := r.H - 5 // header + taints + col-hdr + hint + padding
 	if contentH < 1 {
 		contentH = 1
 	}
@@ -164,9 +174,15 @@ func (v *NodeDetailView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 
 // nameColW returns the pod-name column width based on available screen width.
 func nameColW(screenW int) int {
-	w := screenW - 2 - 6 - 21 - 9 - 9 // borders + icon + ns + restarts + age
-	if w < 20 {
-		w = 20
+	const (
+		colNs       = 21
+		colRestarts = 9
+		colAge      = 8
+		minNameW    = 10
+	)
+	w := screenW - 2 - colAge - colNs - colRestarts
+	if w < minNameW {
+		w = minNameW
 	}
 	return w
 }

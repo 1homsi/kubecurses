@@ -22,7 +22,7 @@ func (v *PodsView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 }
 
 func filterPods(state *model.AppState) []model.Pod {
-	q := strings.ToLower(state.SearchQuery)
+	q := strings.ToLower(state.SearchQuery[model.TabPods])
 	out := make([]model.Pod, 0, len(state.Pods))
 	for _, p := range state.Pods {
 		if state.Namespace != "" && p.Namespace != state.Namespace {

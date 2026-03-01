@@ -9,7 +9,8 @@ const (
 	TabPods                    // flat pod list (Xray)
 	TabDeployments
 	TabNamespaces
-	tabCount // sentinel — keep last
+	TabEvents // warning events feed — sixth tab
+	tabCount  // sentinel — keep last
 )
 
 // TabNames maps Tab constants to display strings.
@@ -19,6 +20,7 @@ var TabNames = [tabCount]string{
 	TabPods:         "Xray",
 	TabDeployments:  "Deployments",
 	TabNamespaces:   "Namespaces",
+	TabEvents:       "Events",
 }
 
 // AppState is the single source of truth for all mutable UI state.
@@ -31,49 +33,63 @@ type AppState struct {
 	Nodes       []Node
 	Namespaces  []Namespace
 	Deployments []Deployment
+	Events      []Event
 	LastErr     error
-	Namespace   string // active namespace filter ("" = all)
-	Context     string // active kubernetes context name
-	SearchMode  bool   // true while the user is typing a search query
-	SearchQuery string // live filter applied to the active view
-	HelpMode    bool   // true while the help overlay is shown
+	Namespace   string
+	Context     string
+	SearchMode  bool
+	SearchQuery [tabCount]string
+	HelpMode    bool
 
-	// Logs overlay state — active when LogsMode is true.
 	LogsMode       bool
 	LogsNamespace  string
 	LogsPod        string
-	LogsContainer  string   // empty = first container / all
-	LogsLines      []string // buffered log output
-	LogsAutoScroll bool     // follow the tail of the log
-	LogsOffset     int      // manual scroll position (ignored when AutoScroll is on)
+	LogsContainer  string
+	LogsLines      []string
+	LogsAutoScroll bool
+	LogsOffset     int
 
-	// Cluster picker overlay state — active when ClusterPickerMode is true.
+	DescribeMode   bool
+	DescribeLines  []string
+	DescribeOffset int
+	DescribeTitle  string
+
 	ClusterPickerMode bool
 	ClusterPickerList []string
 	ClusterPickerSel  int
-	ClusterPickerCurr string // currently connected context
+	ClusterPickerCurr string
 
-	// Incremented each time Pods is replaced — used by views to detect stale caches.
-	PodGeneration uint64
-	// Incremented each time Nodes is replaced — used by views to detect stale caches.
-	NodeGeneration uint64
+	NamespaceFilter     string
+	NamespacePickerMode bool
+	NamespacePickerList []string
+	NamespacePickerSel  int
 
-	// Logs wrapping cache — lazily populated by DrawLogsView / scroll handlers.
-	// Both width and line count must match for the cache to be valid.
+	PodsTruncated bool
+	TotalPods     int
+
+	PodGeneration   uint64
+	NodeGeneration  uint64
+	EventGeneration uint64
+
 	LogsWrapped   []string
 	LogsWrapWidth int
-	LogsWrapCount int // len(LogsLines) when LogsWrapped was computed
+	LogsWrapCount int
 
-	// Heatmap navigation state.
-	NodesLoaded       bool   // true once the first nodes update has been received
-	PodsLoaded        bool   // true once the first pods update has been received
-	HeatmapCols       int    // grid column count — written by HeatmapView.Draw each frame
-	HeatmapScroll     int    // first visible box-row index
-	HeatmapNodeDetail bool   // true = node-detail overlay is active
-	HeatmapDetailNode string // name of the node being detailed
-	HeatmapDetailSel  int    // selected pod index within the node-detail view
-	HeatmapRowPlan    []int  // symmetric row-width plan written by HeatmapView.Draw each frame
+	NodesLoaded       bool
+	PodsLoaded        bool
+	HeatmapCols       int
+	HeatmapScroll     int
+	HeatmapNodeDetail bool
+	HeatmapDetailNode string
+	HeatmapDetailSel  int
+	HeatmapRowPlan    []int
 }
+
+// ActiveSearchQuery returns the search query for the currently active tab.
+func (s *AppState) ActiveSearchQuery() string { return s.SearchQuery[s.ActiveTab] }
+
+// SetActiveSearchQuery sets the search query for the currently active tab.
+func (s *AppState) SetActiveSearchQuery(q string) { s.SearchQuery[s.ActiveTab] = q }
 
 // ApplyUpdate merges an incoming watcher update into state.
 func (s *AppState) ApplyUpdate(u Update) {
@@ -87,6 +103,11 @@ func (s *AppState) ApplyUpdate(u Update) {
 		s.Pods = u.Pods
 		s.PodGeneration++
 		s.PodsLoaded = true
+		s.PodsTruncated = u.PodsTruncated
+		s.TotalPods = u.TotalPodsBeforeCap
+		if !u.PodsTruncated {
+			s.TotalPods = len(u.Pods)
+		}
 		s.clampSelection(TabPods, len(s.Pods))
 	case UpdateNodes:
 		s.Nodes = u.Nodes
@@ -100,6 +121,10 @@ func (s *AppState) ApplyUpdate(u Update) {
 	case UpdateDeployments:
 		s.Deployments = u.Deployments
 		s.clampSelection(TabDeployments, len(s.Deployments))
+	case UpdateEvents:
+		s.Events = u.Events
+		s.EventGeneration++
+		s.clampSelection(TabEvents, len(s.Events))
 	}
 }
 

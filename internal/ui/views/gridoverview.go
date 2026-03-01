@@ -161,7 +161,7 @@ func (v *GridOverviewView) drawEmptyCard(s *ui.Screen, cell ui.Rect) {
 }
 
 func (v *GridOverviewView) groupPods(state *model.AppState) map[string][]model.Pod {
-	q := strings.ToLower(state.SearchQuery)
+	q := strings.ToLower(state.SearchQuery[model.TabNodeOverview])
 	byNode := make(map[string][]model.Pod, len(state.Nodes))
 	for _, p := range state.Pods {
 		if state.Namespace != "" && p.Namespace != state.Namespace {

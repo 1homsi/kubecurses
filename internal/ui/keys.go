@@ -21,18 +21,21 @@ const (
 	ActionPageUp
 	ActionPageDown
 	ActionRefresh
-	ActionSearchOpen        // '/' — enter search mode
-	ActionSearchCancel      // Esc — clear and exit search mode
-	ActionSearchCommit      // Enter — commit query and exit search mode
-	ActionSearchBack        // Backspace — delete last char in query
-	ActionSearchAppend      // any printable rune while in search mode
-	ActionHelp              // '?' — toggle help overlay
-	ActionLogsOpen          // 'l' — open logs for selected pod/container
-	ActionLogsToggleScroll  // 's' — toggle autoscroll in logs view
-	ActionSwitchCluster     // 'c' — open the cluster/context picker
-	ActionConfirm           // Enter — confirm selection in overlays
-	ActionTab5              // '5' — jump to Heatmap tab
-	ActionExecOpen          // 'e' — exec command in selected pod/container
+	ActionSearchOpen
+	ActionSearchCancel
+	ActionSearchCommit
+	ActionSearchBack
+	ActionSearchAppend
+	ActionHelp
+	ActionLogsOpen
+	ActionLogsToggleScroll
+	ActionSwitchCluster
+	ActionConfirm
+	ActionTab5
+	ActionExecOpen
+	ActionTab6
+	ActionSwitchNamespace
+	ActionDescribe
 )
 
 // EventToAction converts a tcell event into a logical Action for normal mode.
@@ -104,8 +107,14 @@ func EventToAction(ev tcell.Event) Action {
 		return ActionTab4
 	case '5':
 		return ActionTab5
+	case '6':
+		return ActionTab6
 	case 'e':
 		return ActionExecOpen
+	case 'n':
+		return ActionSwitchNamespace
+	case 'd':
+		return ActionDescribe
 	}
 
 	return ActionNone

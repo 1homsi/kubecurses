@@ -9,7 +9,26 @@ import (
 // DrawClusterPicker renders the cluster picker overlay using state from AppState.
 // Called from draw() when state.ClusterPickerMode is true.
 func DrawClusterPicker(s *Screen, state *model.AppState) {
-	drawPicker(s, state.ClusterPickerList, state.ClusterPickerCurr, state.ClusterPickerSel)
+	drawPickerGeneric(s, state.ClusterPickerList, state.ClusterPickerCurr, state.ClusterPickerSel, " Select cluster ")
+}
+
+// DrawNamespacePicker renders the namespace picker overlay.
+// Called from draw() when state.NamespacePickerMode is true.
+func DrawNamespacePicker(s *Screen, state *model.AppState) {
+	list := state.NamespacePickerList
+	display := make([]string, len(list))
+	for i, ns := range list {
+		if ns == "" {
+			display[i] = "(all namespaces)"
+		} else {
+			display[i] = ns
+		}
+	}
+	current := state.NamespaceFilter
+	if current == "" {
+		current = "(all namespaces)"
+	}
+	drawPickerGeneric(s, display, current, state.NamespacePickerSel, " Select namespace ")
 }
 
 var (
@@ -82,33 +101,36 @@ func PickContext(s *Screen, contexts []string, current string) (string, bool) {
 }
 
 func drawPicker(s *Screen, contexts []string, current string, sel int) {
+	drawPickerGeneric(s, contexts, current, sel, " Select cluster ")
+}
+
+func drawPickerGeneric(s *Screen, items []string, current string, sel int, title string) {
 	w, h := s.Size()
 	s.Clear()
 
-	// Fill entire screen with dark background.
 	for row := 0; row < h; row++ {
 		s.FillRect(Rect{X: 0, Y: row, W: w, H: 1}, ' ', stylePickerBg)
 	}
 
-	// ── box sizing ────────────────────────────────────────────────────────
-	// Width: fit the longest context name + chrome, capped at screen width-4.
 	minW := 40
 	boxW := minW
-	for _, c := range contexts {
-		if l := len([]rune(c)) + 10; l > boxW { // 10 = cursor + marker + padding
+	for _, c := range items {
+		if l := len([]rune(c)) + 10; l > boxW {
 			boxW = l
 		}
+	}
+	if len([]rune(title))+4 > boxW {
+		boxW = len([]rune(title)) + 4
 	}
 	if boxW > w-4 {
 		boxW = w - 4
 	}
 
-	// Height: border(2) + blank(1) + items + blank(1) + hint(1) + blank(1)
 	maxVisible := h - 8
 	if maxVisible < 1 {
 		maxVisible = 1
 	}
-	visibleItems := len(contexts)
+	visibleItems := len(items)
 	if visibleItems > maxVisible {
 		visibleItems = maxVisible
 	}
@@ -117,46 +139,33 @@ func drawPicker(s *Screen, contexts []string, current string, sel int) {
 	boxX := (w - boxW) / 2
 	boxY := (h - boxH) / 2
 
-	// ── border ────────────────────────────────────────────────────────────
 	drawBox(s, boxX, boxY, boxW, boxH)
 
-	// Title centred on top border.
-	title := " Select cluster "
 	titleX := boxX + (boxW-len([]rune(title)))/2
 	if titleX < boxX+1 {
 		titleX = boxX + 1
 	}
 	s.DrawText(titleX, boxY, stylePickerTitle, title)
 
-	// ── scroll offset ─────────────────────────────────────────────────────
 	scrollOffset := 0
 	if sel >= scrollOffset+visibleItems {
 		scrollOffset = sel - visibleItems + 1
 	}
 
-	// ── items ─────────────────────────────────────────────────────────────
-	// Layout per row (all inside the border, i.e. x in [boxX+1, boxX+boxW-2]):
-	//   col boxX+1        : 1 space padding
-	//   col boxX+2        : cursor "▶" or " "
-	//   col boxX+3        : 1 space
-	//   col boxX+4 …      : context name (truncated)
-	//   col boxX+boxW-4   : " ✦ " marker for current context (3 chars)
-	//   col boxX+boxW-1   : border "│"
-
 	const (
-		cursorCol  = 2 // offset from boxX
-		nameCol    = 4 // offset from boxX
-		markerW    = 3 // " ✦ "
-		innerPad   = 1 // left padding inside border
+		cursorCol = 2
+		nameCol   = 4
+		markerW   = 3
+		innerPad  = 1
 	)
-	nameMaxW := boxW - nameCol - 1 - markerW // leave room for marker + right border
+	nameMaxW := boxW - nameCol - 1 - markerW
 
 	for i := 0; i < visibleItems; i++ {
 		idx := scrollOffset + i
-		if idx >= len(contexts) {
+		if idx >= len(items) {
 			break
 		}
-		name := contexts[idx]
+		name := items[idx]
 		itemY := boxY + 2 + i
 
 		var style tcell.Style
@@ -169,26 +178,21 @@ func drawPicker(s *Screen, contexts []string, current string, sel int) {
 			style = stylePickerItem
 		}
 
-		// Fill the full inner row width (border-to-border minus the │ chars).
 		s.FillRect(Rect{X: boxX + innerPad, Y: itemY, W: boxW - 2, H: 1}, ' ', style)
 
-		// Cursor indicator.
 		if idx == sel {
 			s.DrawText(boxX+cursorCol, itemY, style, "▶")
 		}
 
-		// Context name (truncated so it never touches the marker column).
 		s.DrawTextTrunc(boxX+nameCol, itemY, nameMaxW, style, name)
 
-		// Current-context marker, pinned to the right inside the border.
 		if name == current {
 			s.DrawText(boxX+boxW-1-markerW, itemY, style, " ✦ ")
 		}
 	}
 
-	// ── hint bar ──────────────────────────────────────────────────────────
 	hintY := boxY + boxH - 2
-	hint := "  j/k: move  Enter: select  Esc: keep current  q: quit  "
+	hint := "  j/k: move  Enter: select  Esc: cancel  q: quit  "
 	s.FillRect(Rect{X: boxX + 1, Y: hintY, W: boxW - 2, H: 1}, ' ', stylePickerHint)
 	s.DrawTextTrunc(boxX+2, hintY, boxW-4, stylePickerHint, hint)
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
-// convertNode converts a corev1.Node to a model.Node using the given time as "now".
 func convertNode(n corev1.Node, now time.Time) model.Node {
 	status := "NotReady"
 	for _, c := range n.Status.Conditions {
@@ -39,6 +38,18 @@ func convertNode(n corev1.Node, now time.Time) model.Node {
 	memQ := n.Status.Allocatable["memory"]
 	podsQ := n.Status.Allocatable["pods"]
 
+	taints := make([]string, 0, len(n.Spec.Taints))
+	for _, t := range n.Spec.Taints {
+		s := t.Key
+		if t.Value != "" {
+			s += "=" + t.Value
+		}
+		if t.Effect != "" {
+			s += ":" + string(t.Effect)
+		}
+		taints = append(taints, s)
+	}
+
 	return model.Node{
 		Name:       n.Name,
 		Status:     status,
@@ -48,6 +59,7 @@ func convertNode(n corev1.Node, now time.Time) model.Node {
 		AllocCPUm:  cpuQ.MilliValue(),
 		AllocMemMi: memQ.Value() / (1024 * 1024),
 		AllocPods:  int(podsQ.Value()),
+		Taints:     taints,
 	}
 }
 

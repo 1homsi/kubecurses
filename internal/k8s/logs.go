@@ -20,7 +20,7 @@ func StreamLogs(ctx context.Context, cs *kubernetes.Clientset, namespace, pod, c
 	req := cs.CoreV1().Pods(namespace).GetLogs(pod, opts)
 	stream, err := req.Stream(ctx)
 	if err != nil {
-		return // pod not running, not found, etc.
+		return
 	}
 	defer stream.Close()
 
@@ -30,6 +30,13 @@ func StreamLogs(ctx context.Context, cs *kubernetes.Clientset, namespace, pod, c
 		case lines <- scanner.Text():
 		case <-ctx.Done():
 			return
+		}
+	}
+
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		select {
+		case lines <- "─── stream closed: " + err.Error() + " ───":
+		default:
 		}
 	}
 }

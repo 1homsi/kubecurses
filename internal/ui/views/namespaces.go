@@ -12,16 +12,27 @@ import (
 // NamespacesView renders the namespaces table.
 type NamespacesView struct {
 	scrollOffset int
+	filteredNss  []model.Namespace
+}
+
+func (v *NamespacesView) RowCount() int { return len(v.filteredNss) }
+
+func (v *NamespacesView) SelectedRef(sel int) string {
+	if sel < 0 || sel >= len(v.filteredNss) {
+		return ""
+	}
+	return v.filteredNss[sel].Name
 }
 
 func (v *NamespacesView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
-	m := &namespacesModel{nss: filterNamespaces(state)}
+	v.filteredNss = filterNamespaces(state)
+	m := &namespacesModel{nss: v.filteredNss}
 	sel := state.Selection[model.TabNamespaces]
 	v.scrollOffset = ui.DrawTable(s, r, m, sel, v.scrollOffset)
 }
 
 func filterNamespaces(state *model.AppState) []model.Namespace {
-	q := strings.ToLower(state.SearchQuery)
+	q := strings.ToLower(state.SearchQuery[model.TabNamespaces])
 	out := make([]model.Namespace, 0, len(state.Namespaces))
 	for _, ns := range state.Namespaces {
 		if q != "" && !strings.Contains(strings.ToLower(ns.Name), q) {

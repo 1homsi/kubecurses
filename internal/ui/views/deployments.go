@@ -12,20 +12,34 @@ import (
 
 // DeploymentsView renders the deployments table.
 type DeploymentsView struct {
-	scrollOffset int
+	scrollOffset  int
+	filteredDeps  []model.Deployment
+}
+
+func (v *DeploymentsView) RowCount() int { return len(v.filteredDeps) }
+
+func (v *DeploymentsView) SelectedRef(sel int) (ns, name string) {
+	if sel < 0 || sel >= len(v.filteredDeps) {
+		return "", ""
+	}
+	return v.filteredDeps[sel].Namespace, v.filteredDeps[sel].Name
 }
 
 func (v *DeploymentsView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
-	m := &deploymentsModel{deps: filterDeployments(state)}
+	v.filteredDeps = filterDeployments(state)
+	m := &deploymentsModel{deps: v.filteredDeps}
 	sel := state.Selection[model.TabDeployments]
 	v.scrollOffset = ui.DrawTable(s, r, m, sel, v.scrollOffset)
 }
 
 func filterDeployments(state *model.AppState) []model.Deployment {
-	q := strings.ToLower(state.SearchQuery)
+	q := strings.ToLower(state.SearchQuery[model.TabDeployments])
 	out := make([]model.Deployment, 0, len(state.Deployments))
 	for _, d := range state.Deployments {
 		if state.Namespace != "" && d.Namespace != state.Namespace {
+			continue
+		}
+		if state.NamespaceFilter != "" && d.Namespace != state.NamespaceFilter {
 			continue
 		}
 		if q != "" && !strings.Contains(strings.ToLower(d.Name), q) &&

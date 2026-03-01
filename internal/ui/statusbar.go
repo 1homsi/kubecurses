@@ -6,7 +6,22 @@ import (
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
-const keybindingHint = " q:Quit  Tab:Next  /:Search  r:Refresh  h/j/k/l:navigate"
+func contextHint(state *model.AppState) string {
+	switch {
+	case state.HeatmapNodeDetail:
+		return " Esc:back  l:Logs  e:Exec  d:Describe  hjkl:navigate"
+	case state.LogsMode:
+		return " Esc:close  s:autoscroll  j/k:scroll  PgUp/Dn:page"
+	case state.DescribeMode:
+		return " Esc:close  j/k:scroll  PgUp/Dn:page"
+	case state.ClusterPickerMode, state.NamespacePickerMode:
+		return " Esc:cancel  Enter:select  j/k:navigate"
+	case state.ActiveTab == model.TabHeatmap:
+		return " q:Quit  Tab:Next  hjkl:navigate  Enter:drill-in"
+	default:
+		return " q:Quit  Tab:Next  /:Search  l:Logs  e:Exec  d:Describe  n:Namespace  c:Cluster  ?:Help"
+	}
+}
 
 // DrawStatusBar renders the status bar at the bottom of the screen.
 // When search mode is active it renders a search input bar instead.
@@ -15,9 +30,8 @@ func DrawStatusBar(s *Screen, screenW, screenH int, state *model.AppState) {
 
 	if state.SearchMode {
 		s.FillRect(r, ' ', StyleSelected)
-		prompt := fmt.Sprintf(" / %s", state.SearchQuery)
+		prompt := fmt.Sprintf(" / %s", state.ActiveSearchQuery())
 		s.DrawTextTrunc(r.X, r.Y, r.W-1, StyleSelected, prompt)
-		// Blinking cursor simulation: draw a block at the end of the query.
 		cursorX := r.X + len([]rune(prompt))
 		if cursorX < r.X+r.W {
 			s.DrawText(cursorX, r.Y, StyleSelected.Reverse(true), " ")
@@ -37,10 +51,20 @@ func DrawStatusBar(s *Screen, screenW, screenH int, state *model.AppState) {
 	if nsDisplay == "" {
 		nsDisplay = "all"
 	}
-	filterSuffix := ""
-	if state.SearchQuery != "" {
-		filterSuffix = fmt.Sprintf("  filter:%q", state.SearchQuery)
+	if state.NamespaceFilter != "" {
+		nsDisplay = state.NamespaceFilter
 	}
-	left := fmt.Sprintf(" ns:%s%s%s", nsDisplay, filterSuffix, keybindingHint)
+
+	filterSuffix := ""
+	if q := state.ActiveSearchQuery(); q != "" {
+		filterSuffix = fmt.Sprintf("  filter:%q", q)
+	}
+
+	truncSuffix := ""
+	if state.PodsTruncated {
+		truncSuffix = fmt.Sprintf("  ⚠ pods capped: %d shown of %d", len(state.Pods), state.TotalPods)
+	}
+
+	left := fmt.Sprintf(" ns:%s%s%s%s", nsDisplay, filterSuffix, truncSuffix, contextHint(state))
 	s.DrawTextTrunc(r.X, r.Y, r.W, StyleStatusBar, left)
 }

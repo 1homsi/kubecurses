@@ -3,6 +3,7 @@ package views
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -13,9 +14,10 @@ import (
 type xrayRowKind int
 
 const (
-	xrkNs        xrayRowKind = iota // namespace section header
-	xrkPod                          // pod row
-	xrkContainer                    // container row
+	xrkNs        xrayRowKind = iota
+	xrkPod
+	xrkContainer
+	xrkDetail
 )
 
 type xrayRow struct {
@@ -24,15 +26,17 @@ type xrayRow struct {
 	nsPodCnt   int
 	pod        model.Pod
 	container  model.Container
-	podIsLast  bool // parent pod is the last in its namespace group
-	contIsLast bool // this container is the last under its pod
+	podIsLast  bool
+	contIsLast bool
+	detailText string
 }
 
 // xrayCacheKey groups all inputs that affect the row model.
 type xrayCacheKey struct {
-	podGen uint64
-	query  string
-	ns     string
+	podGen   uint64
+	query    string
+	ns       string
+	nsFilter string
 }
 
 // XrayView renders a namespace → pod → container tree.
@@ -58,7 +62,7 @@ func (v *XrayView) SelectedRef(idx int) (ns, name, container string) {
 	switch row.kind {
 	case xrkPod:
 		return row.pod.Namespace, row.pod.Name, ""
-	case xrkContainer:
+	case xrkContainer, xrkDetail:
 		return row.pod.Namespace, row.pod.Name, row.container.Name
 	}
 	return "", "", ""
@@ -71,6 +75,9 @@ func (v *XrayView) buildRows(state *model.AppState, query string) []xrayRow {
 
 	for _, p := range state.Pods {
 		if state.Namespace != "" && p.Namespace != state.Namespace {
+			continue
+		}
+		if state.NamespaceFilter != "" && p.Namespace != state.NamespaceFilter {
 			continue
 		}
 		if query != "" && !podMatchesQuery(p, query) {
@@ -96,13 +103,25 @@ func (v *XrayView) buildRows(state *model.AppState, query string) []xrayRow {
 				podIsLast: podIsLast,
 			})
 			for ci, cont := range pod.Containers {
+				isLast := ci == len(pod.Containers)-1
+				hasDetail := cont.Message != ""
 				rows = append(rows, xrayRow{
 					kind:       xrkContainer,
 					pod:        pod,
 					container:  cont,
 					podIsLast:  podIsLast,
-					contIsLast: ci == len(pod.Containers)-1,
+					contIsLast: isLast && !hasDetail,
 				})
+				if hasDetail {
+					rows = append(rows, xrayRow{
+						kind:       xrkDetail,
+						pod:        pod,
+						container:  cont,
+						podIsLast:  podIsLast,
+						contIsLast: isLast,
+						detailText: cont.Message,
+					})
+				}
 			}
 		}
 	}
@@ -110,9 +129,9 @@ func (v *XrayView) buildRows(state *model.AppState, query string) []xrayRow {
 }
 
 func (v *XrayView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
-	key := xrayCacheKey{state.PodGeneration, state.SearchQuery, state.Namespace}
+	key := xrayCacheKey{state.PodGeneration, state.SearchQuery[model.TabPods], state.Namespace, state.NamespaceFilter}
 	if !v.cacheValid || key != v.cacheKey {
-		v.cachedRows = v.buildRows(state, state.SearchQuery)
+		v.cachedRows = v.buildRows(state, state.SearchQuery[model.TabPods])
 		v.cacheKey = key
 		v.cacheValid = true
 	}
@@ -176,6 +195,8 @@ func (v *XrayView) drawRow(s *ui.Screen, x, y, w int, row xrayRow, selected bool
 		v.drawPodRow(s, x, y, w, row, selected)
 	case xrkContainer:
 		v.drawContainerRow(s, x, y, w, row, selected)
+	case xrkDetail:
+		v.drawDetailRow(s, x, y, w, row, selected)
 	}
 }
 
@@ -234,7 +255,6 @@ func (v *XrayView) drawPodRow(s *ui.Screen, x, y, w int, row xrayRow, selected b
 func (v *XrayView) drawContainerRow(s *ui.Screen, x, y, w int, row xrayRow, selected bool) {
 	c := row.container
 
-	// Tree connector depends on whether the parent pod is last in its group.
 	var connector string
 	switch {
 	case row.podIsLast && row.contIsLast:
@@ -262,16 +282,48 @@ func (v *XrayView) drawContainerRow(s *ui.Screen, x, y, w int, row xrayRow, sele
 	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', bg)
 	s.DrawText(x, y, connStyle, connector)
 
-	// Name column: from x+8 to a fixed right block of icon(2)+status(10)+rest(5) = 17
+	const rightBlock = 17
 	nameStart := x + 8
-	rightBlock := 17
+
+	resText := ""
+	if w >= 100 && (c.CPURequestM > 0 || c.MemRequestMi > 0) {
+		resText = fmt.Sprintf("cpu:%s/%s mem:%s/%s",
+			formatCPU(c.CPURequestM), formatCPU(c.CPULimitM),
+			formatMem(c.MemRequestMi), formatMem(c.MemLimitMi))
+	}
+
 	nameMaxW := w - 8 - rightBlock
+	if resText != "" {
+		resW := len([]rune(resText)) + 2
+		if nameMaxW-resW >= 10 {
+			nameMaxW -= resW
+		} else {
+			resText = ""
+		}
+	}
 	if nameMaxW < 8 {
 		nameMaxW = 8
 	}
 	rightAt := x + w - rightBlock
 
 	s.DrawText(nameStart, y, nameStyle, fmt.Sprintf("%-*s", nameMaxW, truncate(c.Name, nameMaxW)))
+
+	if c.Image != "" && !selected {
+		img := "[" + imageShort(c.Image) + "]"
+		nameLen := len([]rune(c.Name))
+		if nameLen+1+len([]rune(img)) <= nameMaxW {
+			s.DrawText(nameStart+nameLen+1, y, ui.StyleDim, img)
+		}
+	}
+
+	if resText != "" {
+		resStyle := ui.StyleDim
+		if selected {
+			resStyle = bg
+		}
+		s.DrawText(nameStart+nameMaxW+1, y, resStyle, resText)
+	}
+
 	s.DrawText(rightAt, y, iconStyle, containerIcon(c.Status))
 	s.DrawText(rightAt+2, y, iconStyle, fmt.Sprintf("%-10s", containerStatusShort(c.Status)))
 
@@ -280,6 +332,42 @@ func (v *XrayView) drawContainerRow(s *ui.Screen, x, y, w int, row xrayRow, sele
 		restartStyle = restartCountStyle(c.Restarts)
 	}
 	s.DrawText(rightAt+12, y, restartStyle, fmt.Sprintf("%d", c.Restarts))
+}
+
+func (v *XrayView) drawDetailRow(s *ui.Screen, x, y, w int, row xrayRow, selected bool) {
+	var prefix string
+	switch {
+	case row.podIsLast && row.contIsLast:
+		prefix = "        "
+	case row.podIsLast && !row.contIsLast:
+		prefix = "     │  "
+	case !row.podIsLast && row.contIsLast:
+		prefix = "  │     "
+	default:
+		prefix = "  │  │  "
+	}
+
+	bg := ui.StyleDefault
+	if selected {
+		bg = ui.StyleSelected
+	}
+	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', bg)
+	s.DrawText(x, y, ui.StyleXrayConnector, prefix)
+
+	msgStyle := ui.StyleDim
+	if selected {
+		msgStyle = ui.StyleSelected
+	}
+	if w > 8 {
+		s.DrawTextTrunc(x+8, y, w-8, msgStyle, row.detailText)
+	}
+}
+
+func imageShort(image string) string {
+	if i := strings.LastIndex(image, "/"); i >= 0 {
+		image = image[i+1:]
+	}
+	return image
 }
 
 func containerStatusStyle(status string) tcell.Style {

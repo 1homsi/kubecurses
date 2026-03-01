@@ -25,19 +25,22 @@ const maxLogLines = 5000
 
 // App is the top-level application struct.
 type App struct {
-	cfg            Config
-	screen         *ui.Screen
-	state          model.AppState
-	watcher        *k8s.Watcher
-	watcherCancel  context.CancelFunc // cancels only the watcher goroutines (not Run itself)
-	runCtx         context.Context    // Run()'s context, used when restarting the watcher
-	views          [5]views.View
-	nodeOverview     *views.NodeOverviewView // typed for RowCount + SelectedPodRef
-	xrayView         *views.XrayView        // typed for SelectedRef access
-	nodeDetailView *views.NodeDetailView // heatmap node drill-down
-	events         chan tcell.Event      // fed by a single long-lived goroutine
-	logLines       chan string           // fed by the active log-streaming goroutine; nil when inactive
-	logsCancel     context.CancelFunc
+	cfg             Config
+	screen          *ui.Screen
+	state           model.AppState
+	watcher         *k8s.Watcher
+	watcherCancel   context.CancelFunc
+	runCtx          context.Context
+	views           [6]views.View
+	nodeOverview    *views.NodeOverviewView
+	xrayView        *views.XrayView
+	nodeDetailView  *views.NodeDetailView
+	deploymentsView *views.DeploymentsView
+	namespacesView  *views.NamespacesView
+	eventsView      *views.EventsView
+	events          chan tcell.Event
+	logLines        chan string
+	logsCancel      context.CancelFunc
 }
 
 // New creates and initialises a new App from the given Config.
@@ -88,26 +91,33 @@ func New(cfg Config) (*App, error) {
 	ov := &views.NodeOverviewView{}
 	xv := &views.XrayView{}
 	ndv := &views.NodeDetailView{}
+	dv := &views.DeploymentsView{}
+	nsv := &views.NamespacesView{}
+	ev := &views.EventsView{}
 
 	app := &App{
-		cfg:          cfg,
-		screen:       scr,
-		watcher:      watcher,
-		nodeOverview: ov,
-		xrayView:     xv,
-		nodeDetailView: ndv,
+		cfg:             cfg,
+		screen:          scr,
+		watcher:         watcher,
+		nodeOverview:    ov,
+		xrayView:        xv,
+		nodeDetailView:  ndv,
+		deploymentsView: dv,
+		namespacesView:  nsv,
+		eventsView:      ev,
 		state: model.AppState{
 			Namespace:      cfg.Namespace,
 			Context:        cfg.Context,
 			LogsAutoScroll: true,
 			NoIcons:        cfg.NoIcons,
 		},
-		views: [5]views.View{
+		views: [6]views.View{
 			model.TabNodeOverview: ov,
 			model.TabPods:         xv,
-			model.TabDeployments:  &views.DeploymentsView{},
-			model.TabNamespaces:   &views.NamespacesView{},
+			model.TabDeployments:  dv,
+			model.TabNamespaces:   nsv,
 			model.TabHeatmap:      &views.HeatmapView{},
+			model.TabEvents:       ev,
 		},
 	}
 	return app, nil
@@ -210,8 +220,14 @@ func (a *App) handleEvent(ev tcell.Event) bool {
 	if a.state.LogsMode {
 		return a.applyLogsAction(ui.EventToAction(ev))
 	}
+	if a.state.DescribeMode {
+		return a.applyDescribeAction(ui.EventToAction(ev))
+	}
 	if a.state.ClusterPickerMode {
 		return a.applyPickerAction(ui.EventToAction(ev))
+	}
+	if a.state.NamespacePickerMode {
+		return a.applyNamespacePickerAction(ui.EventToAction(ev))
 	}
 	if a.state.SearchMode {
 		return a.applySearchAction(ui.SearchEventToAction(ev), ev)
@@ -230,9 +246,18 @@ func (a *App) handleMouseEvent(ev *tcell.EventMouse) bool {
 		switch {
 		case a.state.LogsMode:
 			a.logsScrollBy(-3, logsContentH, len(ui.CachedWrapLogs(&a.state, w-6)))
+		case a.state.DescribeMode:
+			a.state.DescribeOffset -= 3
+			if a.state.DescribeOffset < 0 {
+				a.state.DescribeOffset = 0
+			}
 		case a.state.ClusterPickerMode:
 			if a.state.ClusterPickerSel > 0 {
 				a.state.ClusterPickerSel--
+			}
+		case a.state.NamespacePickerMode:
+			if a.state.NamespacePickerSel > 0 {
+				a.state.NamespacePickerSel--
 			}
 		case a.state.HeatmapNodeDetail:
 			if a.state.HeatmapDetailSel > 0 {
@@ -248,9 +273,15 @@ func (a *App) handleMouseEvent(ev *tcell.EventMouse) bool {
 		switch {
 		case a.state.LogsMode:
 			a.logsScrollBy(3, logsContentH, len(ui.CachedWrapLogs(&a.state, w-6)))
+		case a.state.DescribeMode:
+			a.state.DescribeOffset += 3
 		case a.state.ClusterPickerMode:
 			if a.state.ClusterPickerSel < len(a.state.ClusterPickerList)-1 {
 				a.state.ClusterPickerSel++
+			}
+		case a.state.NamespacePickerMode:
+			if a.state.NamespacePickerSel < len(a.state.NamespacePickerList)-1 {
+				a.state.NamespacePickerSel++
 			}
 		case a.state.HeatmapNodeDetail:
 			n := a.heatmapDetailPodCount()
@@ -351,6 +382,148 @@ func (a *App) applyPickerAction(action ui.Action) bool {
 	return false
 }
 
+// applyDescribeAction handles key events while the describe overlay is open.
+func (a *App) applyDescribeAction(action ui.Action) bool {
+	_, h := a.screen.Size()
+	contentH := h - 3
+	totalLines := len(a.state.DescribeLines)
+	maxOff := totalLines - contentH
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	switch action {
+	case ui.ActionQuit:
+		return true
+	case ui.ActionSearchCancel:
+		a.state.DescribeMode = false
+	case ui.ActionMoveDown:
+		if a.state.DescribeOffset < maxOff {
+			a.state.DescribeOffset++
+		}
+	case ui.ActionMoveUp:
+		if a.state.DescribeOffset > 0 {
+			a.state.DescribeOffset--
+		}
+	case ui.ActionPageDown:
+		a.state.DescribeOffset += contentH
+		if a.state.DescribeOffset > maxOff {
+			a.state.DescribeOffset = maxOff
+		}
+	case ui.ActionPageUp:
+		a.state.DescribeOffset -= contentH
+		if a.state.DescribeOffset < 0 {
+			a.state.DescribeOffset = 0
+		}
+	}
+	return false
+}
+
+// applyNamespacePickerAction handles key events while the namespace picker overlay is open.
+func (a *App) applyNamespacePickerAction(action ui.Action) bool {
+	list := a.state.NamespacePickerList
+	switch action {
+	case ui.ActionQuit:
+		return true
+	case ui.ActionSearchCancel:
+		a.state.NamespacePickerMode = false
+	case ui.ActionConfirm:
+		if a.state.NamespacePickerSel < len(list) {
+			a.state.NamespaceFilter = list[a.state.NamespacePickerSel]
+			a.state.NamespacePickerMode = false
+		}
+	case ui.ActionMoveDown:
+		if a.state.NamespacePickerSel < len(list)-1 {
+			a.state.NamespacePickerSel++
+		}
+	case ui.ActionMoveUp:
+		if a.state.NamespacePickerSel > 0 {
+			a.state.NamespacePickerSel--
+		}
+	}
+	return false
+}
+
+// handleNamespacePickerOpen opens the in-app namespace picker.
+func (a *App) handleNamespacePickerOpen() {
+	list := make([]string, 0, len(a.state.Namespaces)+1)
+	list = append(list, "")
+	for _, ns := range a.state.Namespaces {
+		list = append(list, ns.Name)
+	}
+	sel := 0
+	for i, ns := range list {
+		if ns == a.state.NamespaceFilter {
+			sel = i
+			break
+		}
+	}
+	a.state.NamespacePickerList = list
+	a.state.NamespacePickerSel = sel
+	a.state.NamespacePickerMode = true
+}
+
+// handleDescribeOpen runs kubectl describe for the current selection and opens the overlay.
+func (a *App) handleDescribeOpen() {
+	kind, ns, name := a.describeSubject()
+	if name == "" {
+		return
+	}
+	args := []string{"describe", kind, name}
+	if ns != "" {
+		args = append(args, "-n", ns)
+	}
+	if a.cfg.Context != "" {
+		args = append(args, "--context", a.cfg.Context)
+	}
+	if a.cfg.Kubeconfig != "" {
+		args = append(args, "--kubeconfig", a.cfg.Kubeconfig)
+	}
+	out, err := exec.Command("kubectl", args...).CombinedOutput()
+	if err != nil && len(out) == 0 {
+		a.state.LastErr = fmt.Errorf("describe: %w", err)
+		return
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	a.state.DescribeLines = lines
+	a.state.DescribeOffset = 0
+	a.state.DescribeTitle = kind + " " + name
+	if ns != "" {
+		a.state.DescribeTitle = kind + " " + ns + "/" + name
+	}
+	a.state.DescribeMode = true
+}
+
+// describeSubject returns the kind, namespace, and name of the currently selected item.
+func (a *App) describeSubject() (kind, ns, name string) {
+	switch a.state.ActiveTab {
+	case model.TabPods:
+		n, pod, _ := a.xrayView.SelectedRef(a.state.Selection[model.TabPods])
+		return "pod", n, pod
+	case model.TabNodeOverview:
+		k, n, nm := a.nodeOverview.SelectedRef(a.state.Selection[model.TabNodeOverview])
+		return k, n, nm
+	case model.TabHeatmap:
+		if a.state.HeatmapNodeDetail {
+			pods := views.NodeDetailPods(&a.state)
+			if a.state.HeatmapDetailSel < len(pods) {
+				p := pods[a.state.HeatmapDetailSel]
+				return "pod", p.Namespace, p.Name
+			}
+		} else {
+			if sel := a.state.Selection[model.TabHeatmap]; sel < len(a.state.Nodes) {
+				return "node", "", a.state.Nodes[sel].Name
+			}
+		}
+	case model.TabDeployments:
+		n, nm := a.deploymentsView.SelectedRef(a.state.Selection[model.TabDeployments])
+		return "deployment", n, nm
+	case model.TabNamespaces:
+		nm := a.namespacesView.SelectedRef(a.state.Selection[model.TabNamespaces])
+		return "namespace", "", nm
+	}
+	return "", "", ""
+}
+
 // switchCluster reconnects to a different Kubernetes context without restarting Run.
 func (a *App) switchCluster(newContext string) {
 	// Always persist the chosen context so kubectl sees the same cluster after
@@ -401,6 +574,7 @@ func (a *App) switchCluster(newContext string) {
 	a.state.Nodes = nil
 	a.state.Namespaces = nil
 	a.state.Deployments = nil
+	a.state.Events = nil
 }
 
 // openLogs starts streaming logs for the given pod/container.
@@ -546,17 +720,17 @@ func (a *App) applySearchAction(action ui.Action, ev tcell.Event) bool {
 		return true
 	case ui.ActionSearchCancel:
 		a.state.SearchMode = false
-		a.state.SearchQuery = ""
+		a.state.SetActiveSearchQuery("")
 	case ui.ActionSearchCommit:
 		a.state.SearchMode = false
 	case ui.ActionSearchBack:
-		q := []rune(a.state.SearchQuery)
+		q := []rune(a.state.ActiveSearchQuery())
 		if len(q) > 0 {
-			a.state.SearchQuery = string(q[:len(q)-1])
+			a.state.SetActiveSearchQuery(string(q[:len(q)-1]))
 		}
 	case ui.ActionSearchAppend:
 		if evKey, ok := ev.(*tcell.EventKey); ok {
-			a.state.SearchQuery += string(evKey.Rune())
+			a.state.SetActiveSearchQuery(a.state.ActiveSearchQuery() + string(evKey.Rune()))
 		}
 	}
 	return false
@@ -593,6 +767,9 @@ func (a *App) applyAction(action ui.Action) bool {
 	case ui.ActionTab5:
 		a.state.HeatmapNodeDetail = false
 		a.state.SetTab(model.TabNamespaces)
+	case ui.ActionTab6:
+		a.state.HeatmapNodeDetail = false
+		a.state.SetTab(model.TabEvents)
 
 	case ui.ActionMoveUp:
 		if onHeatmap && !inDetail {
@@ -695,7 +872,7 @@ func (a *App) applyAction(action ui.Action) bool {
 		if inDetail {
 			a.state.HeatmapNodeDetail = false
 		} else {
-			a.state.SearchQuery = ""
+			a.state.SetActiveSearchQuery("")
 		}
 
 	case ui.ActionRefresh:
@@ -704,7 +881,7 @@ func (a *App) applyAction(action ui.Action) bool {
 	case ui.ActionSearchOpen:
 		if !onHeatmap {
 			a.state.SearchMode = true
-			a.state.SearchQuery = ""
+			a.state.SetActiveSearchQuery("")
 		}
 
 	case ui.ActionHelp:
@@ -730,6 +907,12 @@ func (a *App) applyAction(action ui.Action) bool {
 
 	case ui.ActionSwitchCluster:
 		a.handleClusterPickerOpen()
+
+	case ui.ActionSwitchNamespace:
+		a.handleNamespacePickerOpen()
+
+	case ui.ActionDescribe:
+		a.handleDescribeOpen()
 	}
 	return false
 }
@@ -877,9 +1060,11 @@ func (a *App) activeLen() int {
 	case model.TabPods:
 		return a.xrayView.RowCount()
 	case model.TabNamespaces:
-		return len(a.state.Namespaces)
+		return a.namespacesView.RowCount()
 	case model.TabDeployments:
-		return len(a.state.Deployments)
+		return a.deploymentsView.RowCount()
+	case model.TabEvents:
+		return a.eventsView.RowCount()
 	case model.TabHeatmap:
 		if a.state.HeatmapNodeDetail {
 			return a.heatmapDetailPodCount()
@@ -909,6 +1094,8 @@ func (a *App) draw() {
 	switch {
 	case a.state.LogsMode:
 		ui.DrawLogsView(a.screen, contentRect, &a.state)
+	case a.state.DescribeMode:
+		ui.DrawDescribeOverlay(a.screen, contentRect, &a.state)
 	case a.state.HeatmapNodeDetail:
 		a.nodeDetailView.Draw(a.screen, contentRect, &a.state)
 	default:
@@ -920,6 +1107,9 @@ func (a *App) draw() {
 	}
 	if a.state.ClusterPickerMode {
 		ui.DrawClusterPicker(a.screen, &a.state)
+	}
+	if a.state.NamespacePickerMode {
+		ui.DrawNamespacePicker(a.screen, &a.state)
 	}
 	a.screen.Show()
 }

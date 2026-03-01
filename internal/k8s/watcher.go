@@ -21,11 +21,11 @@ const (
 
 // WatcherOptions controls how the Watcher fetches and delivers updates.
 type WatcherOptions struct {
-	Watch           bool          // true = informer mode, false = polling
-	PollInterval    time.Duration // used in polling mode
-	MetricsInterval time.Duration // how often to refresh metrics (informer mode)
-	EnableMetrics   bool          // fetch metrics-server data when true
-	MaxPods         int           // cap pod list (0 = unlimited)
+	Watch           bool
+	PollInterval    time.Duration
+	MetricsInterval time.Duration
+	EnableMetrics   bool
+	MaxPods         int
 }
 
 // Watcher runs background goroutines that fetch Kubernetes resources and send
@@ -33,28 +33,20 @@ type WatcherOptions struct {
 // mode and periodic polling mode.
 type Watcher struct {
 	cs         *kubernetes.Clientset
-	restConfig *rest.Config // retained for exec (remotecommand.NewSPDYExecutor)
+	restConfig *rest.Config
 	namespace  string
 	opts       WatcherOptions
 	updates    chan model.Update
 	refresh    chan struct{}
 
-	// pendingReasonsCache is keyed by namespace/name and refreshed at most once per
-	// pendingReasonsTTL. Only the pod worker goroutine touches these fields.
 	pendingReasonsCache   map[string]string
 	pendingReasonsFetchAt time.Time
 
-	// nodeBaseCache holds the last node list without metrics so that metrics
-	// ticks can patch-in usage values without re-listing all nodes.
-	// Protected by nodeBaseMu because the node-change worker and metrics
-	// goroutine run concurrently.
 	nodeBaseMu    sync.Mutex
 	nodeBaseCache []model.Node
 }
 
 // NewWatcher creates a Watcher. Call Start to begin.
-// restConfig is stored for use by exec operations (remotecommand.NewSPDYExecutor);
-// pass nil to disable exec (e.g. in tests that don't need it).
 func NewWatcher(cs *kubernetes.Clientset, restConfig *rest.Config, namespace string, opts WatcherOptions) *Watcher {
 	return &Watcher{
 		cs:         cs,
@@ -109,13 +101,11 @@ func (w *Watcher) startInformers(ctx context.Context) {
 		informers.WithNamespace(w.namespace),
 	)
 
-	// Register informers with the factory before starting it.
 	podInformer := factory.Core().V1().Pods()
 	nodeInformer := factory.Core().V1().Nodes()
 	nsInformer := factory.Core().V1().Namespaces()
 	depInformer := factory.Apps().V1().Deployments()
 
-	// Coalescing trigger channels (capacity 1 — drops redundant signals).
 	podCh := make(chan struct{}, 1)
 	nodeCh := make(chan struct{}, 1)
 	nsCh := make(chan struct{}, 1)
@@ -151,8 +141,6 @@ func (w *Watcher) startInformers(ctx context.Context) {
 
 	factory.Start(ctx.Done())
 
-	// Send each resource type as soon as its own cache is ready — nodes appear
-	// immediately without waiting for the (much larger) pod cache to sync.
 	synced := make(chan struct{})
 	go func() {
 		cache.WaitForCacheSync(ctx.Done(), nodeInformer.Informer().HasSynced)
@@ -167,26 +155,23 @@ func (w *Watcher) startInformers(ctx context.Context) {
 		w.sendDeploymentsFromFactory(ctx, factory)
 	}()
 	go func() {
-		// Pods last — largest cache; send when ready, then signal all-synced.
 		cache.WaitForCacheSync(ctx.Done(), podInformer.Informer().HasSynced)
 		w.sendPodsFromFactory(ctx, factory)
 		close(synced)
 	}()
 
-	// Wait for all caches before starting the event-driven workers so we
-	// don't race with the initial sends above.
 	select {
 	case <-ctx.Done():
 		return
 	case <-synced:
 	}
 
-	// Metrics goroutine — always polled even in Watch mode.
 	if w.opts.EnableMetrics && w.opts.MetricsInterval > 0 {
 		go w.watchMetricsFactory(ctx, factory)
 	}
 
-	// Pod worker.
+	go w.watchEvents(ctx)
+
 	go func() {
 		for {
 			select {
@@ -198,7 +183,6 @@ func (w *Watcher) startInformers(ctx context.Context) {
 		}
 	}()
 
-	// Node worker.
 	go func() {
 		for {
 			select {
@@ -210,7 +194,6 @@ func (w *Watcher) startInformers(ctx context.Context) {
 		}
 	}()
 
-	// Namespace worker.
 	go func() {
 		for {
 			select {
@@ -222,7 +205,6 @@ func (w *Watcher) startInformers(ctx context.Context) {
 		}
 	}()
 
-	// Deployment worker.
 	go func() {
 		for {
 			select {
@@ -246,16 +228,24 @@ func (w *Watcher) sendPodsFromFactory(ctx context.Context, factory informers.Sha
 	for _, p := range items {
 		pods = append(pods, convertPod(*p, now))
 	}
+	var truncated bool
+	var totalBeforeCap int
 	if w.opts.MaxPods > 0 && len(pods) > w.opts.MaxPods {
+		totalBeforeCap = len(pods)
+		truncated = true
 		pods = pods[:w.opts.MaxPods]
 	}
 	w.applyPendingReasons(ctx, pods)
-	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
+	w.send(ctx, model.Update{
+		Kind:               model.UpdatePods,
+		Pods:               pods,
+		PodsTruncated:      truncated,
+		TotalPodsBeforeCap: totalBeforeCap,
+	})
 }
 
 // applyPendingReasons decorates Pending pods with their last FailedScheduling
-// reason, fetching from the API at most once per pendingReasonsTTL. Skips the
-// API call entirely when there are no Pending pods.
+// reason, fetching from the API at most once per pendingReasonsTTL.
 func (w *Watcher) applyPendingReasons(ctx context.Context, pods []model.Pod) {
 	hasPending := false
 	for i := range pods {
@@ -290,7 +280,6 @@ func (w *Watcher) sendNodesFromFactory(ctx context.Context, factory informers.Sh
 	var nodes []model.Node
 
 	if metrics == nil {
-		// Node change: re-list from informer and refresh the base cache.
 		items, err := factory.Core().V1().Nodes().Lister().List(labels.Everything())
 		if err != nil {
 			w.send(ctx, model.Update{Kind: model.UpdateNodes, Err: err})
@@ -306,7 +295,6 @@ func (w *Watcher) sendNodesFromFactory(ctx context.Context, factory informers.Sh
 		w.nodeBaseMu.Unlock()
 		nodes = base
 	} else {
-		// Metrics tick: clone the cached base and patch usage values only.
 		w.nodeBaseMu.Lock()
 		base := w.nodeBaseCache
 		if len(base) > 0 {
@@ -315,7 +303,7 @@ func (w *Watcher) sendNodesFromFactory(ctx context.Context, factory informers.Sh
 		}
 		w.nodeBaseMu.Unlock()
 		if nodes == nil {
-			return // base not populated yet; skip this tick
+			return
 		}
 		for i := range nodes {
 			if m, ok := metrics[nodes[i].Name]; ok {
@@ -378,6 +366,7 @@ func (w *Watcher) startPolling(ctx context.Context) {
 	go w.watchNodes(ctx)
 	go w.watchNamespaces(ctx)
 	go w.watchDeployments(ctx)
+	go w.watchEvents(ctx)
 }
 
 func (w *Watcher) send(ctx context.Context, u model.Update) {
@@ -409,11 +398,20 @@ func (w *Watcher) fetchAndSendPods(ctx context.Context) {
 		w.send(ctx, model.Update{Kind: model.UpdatePods, Err: err})
 		return
 	}
+	var truncated bool
+	var totalBeforeCap int
 	if w.opts.MaxPods > 0 && len(pods) > w.opts.MaxPods {
+		totalBeforeCap = len(pods)
+		truncated = true
 		pods = pods[:w.opts.MaxPods]
 	}
 	w.applyPendingReasons(ctx, pods)
-	w.send(ctx, model.Update{Kind: model.UpdatePods, Pods: pods})
+	w.send(ctx, model.Update{
+		Kind:               model.UpdatePods,
+		Pods:               pods,
+		PodsTruncated:      truncated,
+		TotalPodsBeforeCap: totalBeforeCap,
+	})
 }
 
 func (w *Watcher) watchNodes(ctx context.Context) {
@@ -492,4 +490,25 @@ func (w *Watcher) watchDeployments(ctx context.Context) {
 func (w *Watcher) fetchAndSendDeployments(ctx context.Context) {
 	deps, err := FetchDeployments(ctx, w.cs, w.namespace)
 	w.send(ctx, model.Update{Kind: model.UpdateDeployments, Deployments: deps, Err: err})
+}
+
+func (w *Watcher) watchEvents(ctx context.Context) {
+	ticker := time.NewTicker(w.opts.PollInterval)
+	defer ticker.Stop()
+	w.fetchAndSendEvents(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.fetchAndSendEvents(ctx)
+		case <-w.refresh:
+			w.fetchAndSendEvents(ctx)
+		}
+	}
+}
+
+func (w *Watcher) fetchAndSendEvents(ctx context.Context) {
+	events, err := FetchEvents(ctx, w.cs, w.namespace)
+	w.send(ctx, model.Update{Kind: model.UpdateEvents, Events: events, Err: err})
 }
