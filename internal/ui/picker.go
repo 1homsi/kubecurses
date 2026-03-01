@@ -207,6 +207,56 @@ func DrawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {
 	drawBorderOnly(s, x, y, w, h, style)
 }
 
+// DrawHexFill paints a filled hexagonal polygon on the screen using spaces.
+// Every cell within the hex shape is filled: interior cells receive fillStyle
+// and perimeter cells receive perimStyle. Only the background components of the
+// styles are visible (no special characters are written). The hex geometry
+// matches DrawHexBorder (numTaper=2, step=2).
+//
+// When fillStyle == perimStyle the result is a seamless solid hex. Set a
+// contrasting perimStyle to create a glowing border effect for selection.
+func DrawHexFill(s *Screen, x, y, w, h int, fillStyle, perimStyle tcell.Style) {
+	const step = 2
+	const numTaper = 2
+	minW := 2*(numTaper-1)*step + 4
+	if w < minW {
+		w = minW
+	}
+	if h < 2*numTaper {
+		h = 2 * numTaper
+	}
+
+	for ry := 0; ry < h; ry++ {
+		// Mirror of DrawHexBorder's indent arithmetic.
+		indent := 0
+		if ry < numTaper {
+			indent = (numTaper - 1 - ry) * step
+		} else if fromBot := h - 1 - ry; fromBot < numTaper {
+			indent = (numTaper - 1 - fromBot) * step
+		}
+
+		left := x + indent
+		right := x + w - 1 - indent
+		if left > right {
+			continue
+		}
+		span := right - left + 1
+
+		if indent > 0 || span <= 2 {
+			// Cap rows (indented) are entirely perimeter — the rounded "points"
+			// of the hex shape need a solid highlight so the ring closes cleanly.
+			s.FillRect(Rect{X: left, Y: y + ry, W: span, H: 1}, ' ', perimStyle)
+		} else {
+			// Body row: interior between the perimeter edges.
+			if span > 2 {
+				s.FillRect(Rect{X: left + 1, Y: y + ry, W: span - 2, H: 1}, ' ', fillStyle)
+			}
+			s.FillRect(Rect{X: left, Y: y + ry, W: 1, H: 1}, ' ', perimStyle)
+			s.FillRect(Rect{X: right, Y: y + ry, W: 1, H: 1}, ' ', perimStyle)
+		}
+	}
+}
+
 // DrawHexBorder draws a hexagonal box border with a multi-row taper:
 //
 //	   ╱──────────╲     ← top cap     (indent = numTaper-1)
