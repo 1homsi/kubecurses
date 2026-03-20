@@ -1,20 +1,21 @@
 package ui
 
 import (
-	"github.com/gdamore/tcell/v2"
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
-// DrawClusterPicker renders the cluster picker overlay using state from AppState.
-// Called from draw() when state.ClusterPickerMode is true.
-func DrawClusterPicker(s *Screen, state *model.AppState) {
-	drawPickerGeneric(s, state.ClusterPickerList, state.ClusterPickerCurr, state.ClusterPickerSel, " Select cluster ")
+// RenderClusterPicker renders the cluster picker overlay and returns it as a multi-line string.
+func RenderClusterPicker(state *model.AppState, width, height int) string {
+	return renderPickerGeneric(state.ClusterPickerList, state.ClusterPickerCurr, state.ClusterPickerSel, " Select cluster ", width, height)
 }
 
-// DrawNamespacePicker renders the namespace picker overlay.
-// Called from draw() when state.NamespacePickerMode is true.
-func DrawNamespacePicker(s *Screen, state *model.AppState) {
+// RenderNamespacePicker renders the namespace picker overlay and returns it as a multi-line string.
+func RenderNamespacePicker(state *model.AppState, width, height int) string {
 	list := state.NamespacePickerList
 	display := make([]string, len(list))
 	for i, ns := range list {
@@ -28,90 +29,19 @@ func DrawNamespacePicker(s *Screen, state *model.AppState) {
 	if current == "" {
 		current = "(all namespaces)"
 	}
-	drawPickerGeneric(s, display, current, state.NamespacePickerSel, " Select namespace ")
+	return renderPickerGeneric(display, current, state.NamespacePickerSel, " Select namespace ", width, height)
 }
 
 var (
-	stylePickerBg       = tcell.StyleDefault.Background(tcell.NewRGBColor(13, 14, 20)).Foreground(tcell.NewRGBColor(220, 222, 235))
-	stylePickerTitle    = tcell.StyleDefault.Background(tcell.NewRGBColor(13, 14, 20)).Foreground(tcell.NewRGBColor(130, 190, 255)).Bold(true)
-	stylePickerItem     = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(220, 222, 235))
-	stylePickerSelected = tcell.StyleDefault.Background(tcell.NewRGBColor(0, 68, 148)).Foreground(tcell.ColorWhite).Bold(true)
-	stylePickerCurrent  = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(80, 200, 120))
-	stylePickerHint     = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(100, 105, 130))
+	stylePickerBg       = lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color("#DCDEEB"))
+	stylePickerTitle    = lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color("#82BEFF")).Bold(true)
+	stylePickerItem     = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#DCDEEB"))
+	stylePickerSelected = lipgloss.NewStyle().Background(lipgloss.Color("#004494")).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+	stylePickerCurrent  = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#50C878"))
+	stylePickerHint     = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#646982"))
 )
 
-// PickContext presents a full-screen context picker and returns the chosen
-// context name. Returns ("", true) if the user quits without selecting.
-func PickContext(s *Screen, contexts []string, current string) (string, bool) {
-	if len(contexts) == 0 {
-		return current, false
-	}
-
-	sel := 0
-	for i, c := range contexts {
-		if c == current {
-			sel = i
-			break
-		}
-	}
-
-	for {
-		drawPicker(s, contexts, current, sel)
-		s.Show()
-
-		ev := s.PollEvent()
-		switch ev := ev.(type) {
-		case *tcell.EventResize:
-			s.Sync()
-		case *tcell.EventKey:
-			switch ev.Key() {
-			case tcell.KeyCtrlC:
-				return "", true
-			case tcell.KeyEnter:
-				return contexts[sel], false
-			case tcell.KeyUp:
-				if sel > 0 {
-					sel--
-				}
-			case tcell.KeyDown:
-				if sel < len(contexts)-1 {
-					sel++
-				}
-			case tcell.KeyEsc:
-				return current, false
-			}
-			switch ev.Rune() {
-			case 'q':
-				return "", true
-			case 'k':
-				if sel > 0 {
-					sel--
-				}
-			case 'j':
-				if sel < len(contexts)-1 {
-					sel++
-				}
-			case 'g':
-				sel = 0
-			case 'G':
-				sel = len(contexts) - 1
-			}
-		}
-	}
-}
-
-func drawPicker(s *Screen, contexts []string, current string, sel int) {
-	drawPickerGeneric(s, contexts, current, sel, " Select cluster ")
-}
-
-func drawPickerGeneric(s *Screen, items []string, current string, sel int, title string) {
-	w, h := s.Size()
-	s.Clear()
-
-	for row := 0; row < h; row++ {
-		s.FillRect(Rect{X: 0, Y: row, W: w, H: 1}, ' ', stylePickerBg)
-	}
-
+func renderPickerGeneric(items []string, current string, sel int, title string, screenW, screenH int) string {
 	minW := 40
 	boxW := minW
 	for _, c := range items {
@@ -122,11 +52,11 @@ func drawPickerGeneric(s *Screen, items []string, current string, sel int, title
 	if len([]rune(title))+4 > boxW {
 		boxW = len([]rune(title)) + 4
 	}
-	if boxW > w-4 {
-		boxW = w - 4
+	if boxW > screenW-4 {
+		boxW = screenW - 4
 	}
 
-	maxVisible := h - 8
+	maxVisible := screenH - 8
 	if maxVisible < 1 {
 		maxVisible = 1
 	}
@@ -134,31 +64,52 @@ func drawPickerGeneric(s *Screen, items []string, current string, sel int, title
 	if visibleItems > maxVisible {
 		visibleItems = maxVisible
 	}
-	boxH := visibleItems + 6
 
-	boxX := (w - boxW) / 2
-	boxY := (h - boxH) / 2
+	innerW := boxW - 2 // usable width between │ and │
 
-	drawBox(s, boxX, boxY, boxW, boxH)
+	var lines []string
 
-	titleX := boxX + (boxW-len([]rune(title)))/2
-	if titleX < boxX+1 {
-		titleX = boxX + 1
+	// Top border with title.
+	borderStyle := stylePickerItem
+	topBorder := "╭" + strings.Repeat("─", innerW) + "╮"
+	titleRunes := []rune(title)
+	titleStart := (boxW - len(titleRunes)) / 2
+	if titleStart < 1 {
+		titleStart = 1
 	}
-	s.DrawText(titleX, boxY, stylePickerTitle, title)
+	// Overlay title onto top border.
+	topRunes := []rune(topBorder)
+	for i, ch := range titleRunes {
+		pos := titleStart + i
+		if pos < len(topRunes)-1 {
+			topRunes[pos] = ch
+		}
+	}
+	lines = append(lines, borderStyle.Render(string(topRunes[:1]))+
+		stylePickerTitle.Render(string(topRunes[1:titleStart]))+
+		stylePickerTitle.Render(title)+
+		stylePickerTitle.Render(string(topRunes[titleStart+len(titleRunes):len(topRunes)-1]))+
+		borderStyle.Render(string(topRunes[len(topRunes)-1:])))
 
+	// Blank row after title.
+	lines = append(lines, borderStyle.Render("│")+stylePickerItem.Render(strings.Repeat(" ", innerW))+borderStyle.Render("│"))
+
+	// Item rows.
 	scrollOffset := 0
 	if sel >= scrollOffset+visibleItems {
 		scrollOffset = sel - visibleItems + 1
 	}
 
+	// Layout: [pad 1][cursor 3][name nameMaxW][marker 3] = innerW
 	const (
-		cursorCol = 2
-		nameCol   = 4
-		markerW   = 3
-		innerPad  = 1
+		padW    = 1
+		cursorW = 3
+		markerW = 3
 	)
-	nameMaxW := boxW - nameCol - 1 - markerW
+	nameMaxW := innerW - padW - cursorW - markerW
+	if nameMaxW < 4 {
+		nameMaxW = 4
+	}
 
 	for i := 0; i < visibleItems; i++ {
 		idx := scrollOffset + i
@@ -166,9 +117,8 @@ func drawPickerGeneric(s *Screen, items []string, current string, sel int, title
 			break
 		}
 		name := items[idx]
-		itemY := boxY + 2 + i
 
-		var style tcell.Style
+		var style lipgloss.Style
 		switch {
 		case idx == sel:
 			style = stylePickerSelected
@@ -178,48 +128,62 @@ func drawPickerGeneric(s *Screen, items []string, current string, sel int, title
 			style = stylePickerItem
 		}
 
-		s.FillRect(Rect{X: boxX + innerPad, Y: itemY, W: boxW - 2, H: 1}, ' ', style)
-
+		cursor := "   "
 		if idx == sel {
-			s.DrawText(boxX+cursorCol, itemY, style, "▶")
+			cursor = " ▶ "
 		}
 
-		s.DrawTextTrunc(boxX+nameCol, itemY, nameMaxW, style, name)
+		nameStr := fmt.Sprintf("%-*s", nameMaxW, Truncate(name, nameMaxW))
 
+		marker := "   "
 		if name == current {
-			s.DrawText(boxX+boxW-1-markerW, itemY, style, " ✦ ")
+			marker = " ✦ "
 		}
+
+		rowContent := " " + cursor + nameStr + marker
+		// Ensure exact innerW width.
+		rowRunes := []rune(rowContent)
+		if len(rowRunes) < innerW {
+			rowContent += strings.Repeat(" ", innerW-len(rowRunes))
+		} else if len(rowRunes) > innerW {
+			rowContent = string(rowRunes[:innerW])
+		}
+		lines = append(lines, borderStyle.Render("│")+style.Render(rowContent)+borderStyle.Render("│"))
 	}
 
-	hintY := boxY + boxH - 2
+	// Blank row before hint.
+	lines = append(lines, borderStyle.Render("│")+stylePickerItem.Render(strings.Repeat(" ", innerW))+borderStyle.Render("│"))
+
+	// Hint row.
 	hint := "  j/k: move  Enter: select  Esc: cancel  q: quit  "
-	s.FillRect(Rect{X: boxX + 1, Y: hintY, W: boxW - 2, H: 1}, ' ', stylePickerHint)
-	s.DrawTextTrunc(boxX+2, hintY, boxW-4, stylePickerHint, hint)
+	hintContent := fmt.Sprintf("%-*s", innerW, Truncate(hint, innerW))
+	lines = append(lines, borderStyle.Render("│")+stylePickerHint.Render(hintContent)+borderStyle.Render("│"))
+
+	// Bottom border.
+	lines = append(lines, borderStyle.Render("╰"+strings.Repeat("─", innerW)+"╯"))
+
+	return strings.Join(lines, "\n")
 }
 
-// drawBox draws a rounded-corner box border and fills the interior.
-func drawBox(s *Screen, x, y, w, h int) {
-	drawBorderOnly(s, x, y, w, h, stylePickerItem)
-	for i := 1; i < h-1; i++ {
-		s.FillRect(Rect{X: x + 1, Y: y + i, W: w - 2, H: 1}, ' ', stylePickerItem)
+// RenderBorder renders only the rounded-corner box border as []string rows.
+func RenderBorder(w, h int, style lipgloss.Style) []string {
+	if w < 2 || h < 2 {
+		return nil
 	}
+	lines := make([]string, h)
+	lines[0] = style.Render("╭" + strings.Repeat("─", w-2) + "╮")
+	for i := 1; i < h-1; i++ {
+		lines[i] = style.Render("│") + strings.Repeat(" ", w-2) + style.Render("│")
+	}
+	lines[h-1] = style.Render("╰" + strings.Repeat("─", w-2) + "╯")
+	return lines
 }
 
-// DrawBorderOnly draws only the rounded-corner box border using the given style.
-// The interior is not touched — callers fill it themselves.
-func DrawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {
-	drawBorderOnly(s, x, y, w, h, style)
-}
-
-// DrawHexFill paints a filled hexagonal polygon on the screen using spaces.
+// RenderHexFill returns []string rows representing a filled hexagonal polygon.
 // Every cell within the hex shape is filled: interior cells receive fillStyle
-// and perimeter cells receive perimStyle. Only the background components of the
-// styles are visible (no special characters are written). The hex geometry
-// matches DrawHexBorder (numTaper=2, step=2).
-//
-// When fillStyle == perimStyle the result is a seamless solid hex. Set a
-// contrasting perimStyle to create a glowing border effect for selection.
-func DrawHexFill(s *Screen, x, y, w, h int, fillStyle, perimStyle tcell.Style) {
+// and perimeter cells receive perimStyle. The hex geometry matches RenderHexBorder
+// (numTaper=2, step=2).
+func RenderHexFill(w, h int, fillStyle, perimStyle lipgloss.Style) []string {
 	const step = 2
 	const numTaper = 2
 	minW := 2*(numTaper-1)*step + 4
@@ -230,8 +194,8 @@ func DrawHexFill(s *Screen, x, y, w, h int, fillStyle, perimStyle tcell.Style) {
 		h = 2 * numTaper
 	}
 
+	rows := make([]string, h)
 	for ry := 0; ry < h; ry++ {
-		// Mirror of DrawHexBorder's indent arithmetic.
 		indent := 0
 		if ry < numTaper {
 			indent = (numTaper - 1 - ry) * step
@@ -239,47 +203,37 @@ func DrawHexFill(s *Screen, x, y, w, h int, fillStyle, perimStyle tcell.Style) {
 			indent = (numTaper - 1 - fromBot) * step
 		}
 
-		left := x + indent
-		right := x + w - 1 - indent
+		left := indent
+		right := w - 1 - indent
 		if left > right {
+			rows[ry] = strings.Repeat(" ", w)
 			continue
 		}
 		span := right - left + 1
 
 		if indent > 0 || span <= 2 {
-			// Cap rows (indented) are entirely perimeter — the rounded "points"
-			// of the hex shape need a solid highlight so the ring closes cleanly.
-			s.FillRect(Rect{X: left, Y: y + ry, W: span, H: 1}, ' ', perimStyle)
+			// Cap rows (indented) are entirely perimeter.
+			rows[ry] = strings.Repeat(" ", left) +
+				perimStyle.Render(strings.Repeat(" ", span)) +
+				strings.Repeat(" ", w-left-span)
 		} else {
-			// Body row: interior between the perimeter edges.
+			// Body row: perimeter edges + interior fill.
+			interior := ""
 			if span > 2 {
-				s.FillRect(Rect{X: left + 1, Y: y + ry, W: span - 2, H: 1}, ' ', fillStyle)
+				interior = fillStyle.Render(strings.Repeat(" ", span-2))
 			}
-			s.FillRect(Rect{X: left, Y: y + ry, W: 1, H: 1}, ' ', perimStyle)
-			s.FillRect(Rect{X: right, Y: y + ry, W: 1, H: 1}, ' ', perimStyle)
+			rows[ry] = perimStyle.Render(" ") +
+				interior +
+				perimStyle.Render(" ")
 		}
 	}
+	return rows
 }
 
-// DrawHexBorder draws a hexagonal box border with a multi-row taper:
-//
-//	   ╱──────────╲     ← top cap     (indent = numTaper-1)
-//	  ╱            ╲    ← taper row   (indent = numTaper-2)
-//	 ╱              ╲   ← taper row   (indent = 1)
-//	╱                ╲  ← shoulder    (indent = 0, full width)
-//	│  content        │ ← body rows
-//	╲                ╱
-//	 ╲              ╱
-//	  ╲            ╱
-//	   ╲──────────╱     ← bottom cap
-//
-// numTaper = w/8 (min 2) — the number of diagonal rows on each side.
-// This creates a genuine hexagonal silhouette at any box width.
-// Minimum h = 2*numTaper (no body rows).
-func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
-	const step = 2 // chars narrowed per taper row on each side
+// RenderHexBorder returns []string rows representing a hexagonal box border.
+func RenderHexBorder(w, h int, style lipgloss.Style) []string {
+	const step = 2
 	numTaper := 2
-	// Minimum width: cap must be at least 4 chars wide (2 corners + 2 dashes).
 	minW := 2*(numTaper-1)*step + 4
 	if w < minW {
 		w = minW
@@ -288,52 +242,39 @@ func DrawHexBorder(s *Screen, x, y, w, h int, style tcell.Style) {
 		h = 2 * numTaper
 	}
 
-	// Top taper: only the topmost row (k=0, cap/edge) gets dashes.
+	rows := make([]string, h)
 	for k := 0; k < numTaper; k++ {
 		indent := (numTaper - 1 - k) * step
-		row := y + k
-		s.DrawText(x+indent, row, style, "╱")
+		row := strings.Repeat(" ", indent) + style.Render("╱")
 		if k == 0 {
-			for i := indent + 1; i < w-indent-1; i++ {
-				s.DrawText(x+i, row, style, "─")
-			}
+			row += style.Render(strings.Repeat("─", w-2*indent-2))
+		} else {
+			row += strings.Repeat(" ", w-2*indent-2)
 		}
-		s.DrawText(x+w-indent-1, row, style, "╲")
+		row += style.Render("╲")
+		if indent > 0 {
+			row += strings.Repeat(" ", indent)
+		}
+		rows[k] = row
 	}
 
-	// Vertical body sides.
 	for i := numTaper; i < h-numTaper; i++ {
-		s.DrawText(x, y+i, style, "│")
-		s.DrawText(x+w-1, y+i, style, "│")
+		rows[i] = style.Render("│") + strings.Repeat(" ", w-2) + style.Render("│")
 	}
 
-	// Bottom taper: only the bottommost row (k=numTaper-1, cap/edge) gets dashes.
 	for k := 0; k < numTaper; k++ {
 		indent := k * step
-		row := y + h - numTaper + k
-		s.DrawText(x+indent, row, style, "╲")
+		row := strings.Repeat(" ", indent) + style.Render("╲")
 		if k == numTaper-1 {
-			for i := indent + 1; i < w-indent-1; i++ {
-				s.DrawText(x+i, row, style, "─")
-			}
+			row += style.Render(strings.Repeat("─", w-2*indent-2))
+		} else {
+			row += strings.Repeat(" ", w-2*indent-2)
 		}
-		s.DrawText(x+w-indent-1, row, style, "╱")
+		row += style.Render("╱")
+		if indent > 0 {
+			row += strings.Repeat(" ", indent)
+		}
+		rows[h-numTaper+k] = row
 	}
-}
-
-// drawBorderOnly draws only the rounded-corner box border using the given style.
-// The interior is not touched — callers fill it themselves.
-func drawBorderOnly(s *Screen, x, y, w, h int, style tcell.Style) {
-	s.DrawText(x, y, style, "╭")
-	s.DrawText(x+w-1, y, style, "╮")
-	s.DrawText(x, y+h-1, style, "╰")
-	s.DrawText(x+w-1, y+h-1, style, "╯")
-	for i := 1; i < w-1; i++ {
-		s.DrawText(x+i, y, style, "─")
-		s.DrawText(x+i, y+h-1, style, "─")
-	}
-	for i := 1; i < h-1; i++ {
-		s.DrawText(x, y+i, style, "│")
-		s.DrawText(x+w-1, y+i, style, "│")
-	}
+	return rows
 }

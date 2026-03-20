@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 	"github.com/1homsi/kubecurses/internal/ui"
 )
 
-var styleEventWarning = tcell.StyleDefault.
-	Foreground(tcell.NewRGBColor(210, 160, 50)).
-	Background(tcell.NewRGBColor(13, 14, 20))
+var styleEventWarning = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("#D2A032")).
+	Background(lipgloss.Color("#101010"))
 
 const (
 	evTypeW   = 7
@@ -21,12 +21,12 @@ const (
 	evReasonW = 18
 	evCntW    = 4
 	evAgeW    = 7
-	evNsAt     = evTypeW + 1
-	evObjAt    = evNsAt + evNsW + 1
+	evNsAt    = evTypeW + 1
+	evObjAt   = evNsAt + evNsW + 1
 	evReasonAt = evObjAt + evObjW + 1
-	evCntAt    = evReasonAt + evReasonW + 1
-	evAgeAt    = evCntAt + evCntW + 1
-	evMsgAt    = evAgeAt + evAgeW + 1
+	evCntAt   = evReasonAt + evReasonW + 1
+	evAgeAt   = evCntAt + evCntW + 1
+	evMsgAt   = evAgeAt + evAgeW + 1
 )
 
 type EventsView struct {
@@ -36,7 +36,7 @@ type EventsView struct {
 
 func (v *EventsView) RowCount() int { return len(v.rows) }
 
-func (v *EventsView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
+func (v *EventsView) Render(width, height int, state *model.AppState) string {
 	q := strings.ToLower(state.SearchQuery[model.TabEvents])
 	v.rows = filterEvents(state.Events, q)
 	sel := state.Selection[model.TabEvents]
@@ -45,30 +45,32 @@ func (v *EventsView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		state.Selection[model.TabEvents] = sel
 	}
 
-	v.drawHeader(s, r.X, r.Y, r.W)
-	content := ui.Rect{X: r.X, Y: r.Y + 1, W: r.W, H: r.H - 1}
+	var lines []string
+	lines = append(lines, v.renderHeader(width))
+	contentH := height - 1
 
 	if len(v.rows) > 0 {
 		if sel < v.scrollOffset {
 			v.scrollOffset = sel
 		}
-		if sel >= v.scrollOffset+content.H {
-			v.scrollOffset = sel - content.H + 1
+		if sel >= v.scrollOffset+contentH {
+			v.scrollOffset = sel - contentH + 1
 		}
 		if v.scrollOffset < 0 {
 			v.scrollOffset = 0
 		}
 	}
 
-	for i := 0; i < content.H; i++ {
+	for i := 0; i < contentH; i++ {
 		rowIdx := v.scrollOffset + i
-		y := content.Y + i
 		if rowIdx >= len(v.rows) {
-			s.FillRect(ui.Rect{X: content.X, Y: y, W: content.W, H: 1}, ' ', ui.StyleDefault)
+			lines = append(lines, ui.FillWidth(width, ui.StyleDefault))
 			continue
 		}
-		v.drawEventRow(s, content.X, y, content.W, v.rows[rowIdx], rowIdx == sel)
+		lines = append(lines, v.renderEventRow(width, v.rows[rowIdx], rowIdx == sel))
 	}
+
+	return strings.Join(lines, "\n")
 }
 
 func filterEvents(events []model.Event, q string) []model.Event {
@@ -88,20 +90,21 @@ func filterEvents(events []model.Event, q string) []model.Event {
 	return out
 }
 
-func (v *EventsView) drawHeader(s *ui.Screen, x, y, w int) {
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleHeader)
-	s.DrawText(x, y, ui.StyleHeader, fmt.Sprintf("%-*s", evTypeW, "TYPE"))
-	s.DrawText(x+evNsAt, y, ui.StyleHeader, fmt.Sprintf("%-*s", evNsW, "NAMESPACE"))
-	s.DrawText(x+evObjAt, y, ui.StyleHeader, fmt.Sprintf("%-*s", evObjW, "OBJECT"))
-	s.DrawText(x+evReasonAt, y, ui.StyleHeader, fmt.Sprintf("%-*s", evReasonW, "REASON"))
-	s.DrawText(x+evCntAt, y, ui.StyleHeader, fmt.Sprintf("%-*s", evCntW, "CNT"))
-	s.DrawText(x+evAgeAt, y, ui.StyleHeader, fmt.Sprintf("%-*s", evAgeW, "AGE"))
+func (v *EventsView) renderHeader(w int) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%-*s", evTypeW, "TYPE"))
+	b.WriteString(fmt.Sprintf(" %-*s", evNsW, "NAMESPACE"))
+	b.WriteString(fmt.Sprintf(" %-*s", evObjW, "OBJECT"))
+	b.WriteString(fmt.Sprintf(" %-*s", evReasonW, "REASON"))
+	b.WriteString(fmt.Sprintf(" %-*s", evCntW, "CNT"))
+	b.WriteString(fmt.Sprintf(" %-*s", evAgeW, "AGE"))
 	if evMsgAt < w {
-		s.DrawText(x+evMsgAt, y, ui.StyleHeader, "MESSAGE")
+		b.WriteString(" MESSAGE")
 	}
+	return ui.StyleHeader.Render(ui.PadRight(b.String(), w))
 }
 
-func (v *EventsView) drawEventRow(s *ui.Screen, x, y, w int, e model.Event, selected bool) {
+func (v *EventsView) renderEventRow(w int, e model.Event, selected bool) string {
 	style := ui.StyleDefault
 	if e.Type == "Warning" {
 		style = styleEventWarning
@@ -109,14 +112,20 @@ func (v *EventsView) drawEventRow(s *ui.Screen, x, y, w int, e model.Event, sele
 	if selected {
 		style = ui.StyleSelected
 	}
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', style)
-	s.DrawTextTrunc(x, y, evTypeW, style, e.Type)
-	s.DrawTextTrunc(x+evNsAt, y, evNsW, style, e.Namespace)
-	s.DrawTextTrunc(x+evObjAt, y, evObjW, style, e.Kind+"/"+e.Name)
-	s.DrawTextTrunc(x+evReasonAt, y, evReasonW, style, e.Reason)
-	s.DrawText(x+evCntAt, y, style, fmt.Sprintf("%-*d", evCntW, e.Count))
-	s.DrawTextTrunc(x+evAgeAt, y, evAgeW, style, formatDuration(e.Age))
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%-*s", evTypeW, truncate(e.Type, evTypeW)))
+	b.WriteString(fmt.Sprintf(" %-*s", evNsW, truncate(e.Namespace, evNsW)))
+	b.WriteString(fmt.Sprintf(" %-*s", evObjW, truncate(e.Kind+"/"+e.Name, evObjW)))
+	b.WriteString(fmt.Sprintf(" %-*s", evReasonW, truncate(e.Reason, evReasonW)))
+	b.WriteString(fmt.Sprintf(" %-*d", evCntW, e.Count))
+	b.WriteString(fmt.Sprintf(" %-*s", evAgeW, truncate(formatDuration(e.Age), evAgeW)))
 	if evMsgAt < w {
-		s.DrawTextTrunc(x+evMsgAt, y, w-evMsgAt, style, e.Message)
+		msgW := w - evMsgAt
+		if msgW > 0 {
+			b.WriteString(fmt.Sprintf(" %-*s", msgW, truncate(e.Message, msgW)))
+		}
 	}
+
+	return style.Render(ui.PadRight(b.String(), w))
 }

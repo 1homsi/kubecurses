@@ -38,6 +38,8 @@ type Watcher struct {
 	opts       WatcherOptions
 	updates    chan model.Update
 	refresh    chan struct{}
+	done       chan struct{}
+	closeOnce  sync.Once
 
 	pendingReasonsCache   map[string]string
 	pendingReasonsFetchAt time.Time
@@ -55,6 +57,7 @@ func NewWatcher(cs *kubernetes.Clientset, restConfig *rest.Config, namespace str
 		opts:       opts,
 		updates:    make(chan model.Update, updateChanCap),
 		refresh:    make(chan struct{}, 1),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -81,6 +84,17 @@ func (w *Watcher) TriggerRefresh() {
 	case w.refresh <- struct{}{}:
 	default:
 	}
+}
+
+// Close signals that no more updates should be sent and unblocks any
+// goroutine waiting on Updates(). Safe to call multiple times.
+func (w *Watcher) Close() {
+	w.closeOnce.Do(func() { close(w.done) })
+}
+
+// Done returns a channel that is closed when the watcher is shut down.
+func (w *Watcher) Done() <-chan struct{} {
+	return w.done
 }
 
 // Start launches the background goroutines.
@@ -141,10 +155,13 @@ func (w *Watcher) startInformers(ctx context.Context) {
 
 	factory.Start(ctx.Done())
 
-	synced := make(chan struct{})
+	// Send each resource as soon as its informer syncs — don't block on all.
 	go func() {
 		cache.WaitForCacheSync(ctx.Done(), nodeInformer.Informer().HasSynced)
 		w.sendNodesFromFactory(ctx, factory, nil)
+		if w.opts.EnableMetrics && w.opts.MetricsInterval > 0 {
+			go w.watchMetricsFactory(ctx, factory)
+		}
 	}()
 	go func() {
 		cache.WaitForCacheSync(ctx.Done(), nsInformer.Informer().HasSynced)
@@ -157,18 +174,7 @@ func (w *Watcher) startInformers(ctx context.Context) {
 	go func() {
 		cache.WaitForCacheSync(ctx.Done(), podInformer.Informer().HasSynced)
 		w.sendPodsFromFactory(ctx, factory)
-		close(synced)
 	}()
-
-	select {
-	case <-ctx.Done():
-		return
-	case <-synced:
-	}
-
-	if w.opts.EnableMetrics && w.opts.MetricsInterval > 0 {
-		go w.watchMetricsFactory(ctx, factory)
-	}
 
 	go w.watchEvents(ctx)
 
@@ -373,6 +379,10 @@ func (w *Watcher) send(ctx context.Context, u model.Update) {
 	select {
 	case w.updates <- u:
 	case <-ctx.Done():
+	case <-w.done:
+	default:
+		// Channel full (e.g. during exec) — drop this update.
+		// Fresh data will arrive on next cycle.
 	}
 }
 

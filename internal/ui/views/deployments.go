@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 	"github.com/1homsi/kubecurses/internal/ui"
@@ -12,8 +12,8 @@ import (
 
 // DeploymentsView renders the deployments table.
 type DeploymentsView struct {
-	scrollOffset  int
-	filteredDeps  []model.Deployment
+	scrollOffset int
+	filteredDeps []model.Deployment
 }
 
 func (v *DeploymentsView) RowCount() int { return len(v.filteredDeps) }
@@ -25,11 +25,13 @@ func (v *DeploymentsView) SelectedRef(sel int) (ns, name string) {
 	return v.filteredDeps[sel].Namespace, v.filteredDeps[sel].Name
 }
 
-func (v *DeploymentsView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
+func (v *DeploymentsView) Render(width, height int, state *model.AppState) string {
 	v.filteredDeps = filterDeployments(state)
 	m := &deploymentsModel{deps: v.filteredDeps}
 	sel := state.Selection[model.TabDeployments]
-	v.scrollOffset = ui.DrawTable(s, r, m, sel, v.scrollOffset)
+	var rendered string
+	rendered, v.scrollOffset = ui.RenderTable(width, height, m, sel, v.scrollOffset)
+	return rendered
 }
 
 func filterDeployments(state *model.AppState) []model.Deployment {
@@ -74,6 +76,6 @@ func (m *deploymentsModel) Rows() [][]string {
 	return rows
 }
 
-func (m *deploymentsModel) StyleForRow(_ int) tcell.Style {
+func (m *deploymentsModel) StyleForRow(_ int) lipgloss.Style {
 	return ui.StyleDefault
 }

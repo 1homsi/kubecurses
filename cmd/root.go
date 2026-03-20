@@ -2,24 +2,31 @@
 package cmd
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"k8s.io/klog/v2"
 
 	"github.com/1homsi/kubecurses/internal/app"
+	"github.com/1homsi/kubecurses/internal/k8s"
 	"github.com/1homsi/kubecurses/internal/ui"
 )
 
 // Execute parses flags and runs the application.
 func Execute(version, commit, buildDate string) {
-	// Silence klog (used by client-go / informers) so its trace and reflector
-	// messages don't bleed through the tcell screen and corrupt the TUI.
+	// Silence klog (used by client-go / informers) so its messages
+	// don't bleed through the Bubble Tea screen and corrupt the TUI.
+	klog.InitFlags(nil)
+	_ = flag.Set("logtostderr", "false")
+	_ = flag.Set("alsologtostderr", "false")
+	_ = flag.Set("stderrthreshold", "FATAL")
+	_ = flag.Set("v", "0")
 	klog.SetOutput(io.Discard)
+	klog.LogToStderr(false)
 
 	cfg := app.DefaultConfig()
 
@@ -50,16 +57,29 @@ func Execute(version, commit, buildDate string) {
 		os.Exit(0)
 	}
 
+	// Context picker: run a mini tea.Program when no --context flag was given.
+	if cfg.Context == "" {
+		contexts, current, err := k8s.ListContexts(cfg.Kubeconfig)
+		if err == nil && len(contexts) > 1 {
+			chosen, quit := app.RunContextPicker(contexts, current)
+			if quit {
+				os.Exit(0)
+			}
+			cfg.Context = chosen
+			if chosen != current {
+				_ = k8s.PersistCurrentContext(cfg.Kubeconfig, chosen)
+			}
+		}
+	}
+
 	a, err := app.New(cfg)
 	if err != nil {
-		if err == app.ErrCancelled {
-			os.Exit(0)
-		}
 		fmt.Fprintf(os.Stderr, "kubecurses: init error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := a.Run(context.Background()); err != nil && err != context.Canceled {
+	p := tea.NewProgram(a, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "kubecurses: %v\n", err)
 		os.Exit(1)
 	}

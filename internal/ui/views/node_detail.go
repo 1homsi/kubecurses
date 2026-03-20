@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 	"github.com/1homsi/kubecurses/internal/ui"
@@ -49,7 +49,7 @@ func nodeDetailOrder(status string) int {
 	return 4
 }
 
-func (v *NodeDetailView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
+func (v *NodeDetailView) Render(width, height int, state *model.AppState) string {
 	// Find the node.
 	var selNode *model.Node
 	for i := range state.Nodes {
@@ -65,16 +65,19 @@ func (v *NodeDetailView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		sel = 0
 	}
 
+	var lines []string
+
 	// ── Header ────────────────────────────────────────────────────────────────
-	titleY := r.Y
 	dot := "●"
 	dotStyle := ui.StyleNodeReadyDot
 	if selNode != nil && selNode.Status != "Ready" {
 		dotStyle = ui.StyleNodeNotReadyDot
 	}
-	s.DrawText(r.X, titleY, dotStyle, dot)
 	nodeTitle := fmt.Sprintf(" Node: %s", state.HeatmapDetailNode)
-	s.DrawTextTrunc(r.X+1, titleY, r.W-2, ui.StyleNodeName, nodeTitle)
+
+	var hdrB strings.Builder
+	hdrB.WriteString(dotStyle.Render(dot))
+	hdrB.WriteString(ui.StyleNodeName.Render(truncate(nodeTitle, width-2)))
 
 	// Metrics on the same line (right-aligned) if available.
 	if selNode != nil && selNode.MetricsOK {
@@ -87,27 +90,41 @@ func (v *NodeDetailView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			memPct = selNode.UsedMemMi * 100 / selNode.AllocMemMi
 		}
 		met := fmt.Sprintf("CPU %3d%%  MEM %3d%%  ", cpuPct, memPct)
-		s.DrawTextTrunc(r.X+r.W-len([]rune(met))-1, titleY, len([]rune(met)), ui.StyleNodeMeta, met)
+		// Pad between title and metrics
+		titleLen := 1 + len([]rune(truncate(nodeTitle, width-2)))
+		metLen := len([]rune(met))
+		gap := width - titleLen - metLen
+		if gap > 0 {
+			hdrB.WriteString(ui.StyleNodeName.Render(strings.Repeat(" ", gap)))
+			hdrB.WriteString(ui.StyleNodeMeta.Render(met))
+		}
 	}
 
+	hdrResult := hdrB.String()
+	hdrRunes := len([]rune(hdrResult))
+	// Approximate — pad with background
+	if hdrRunes < width {
+		hdrResult += ui.StyleDefault.Render(strings.Repeat(" ", width-hdrRunes))
+	}
+	lines = append(lines, hdrResult)
+
 	// ── Taints ────────────────────────────────────────────────────────────────
-	taintsY := r.Y + 1
 	if selNode != nil && len(selNode.Taints) > 0 {
-		s.FillRect(ui.Rect{X: r.X, Y: taintsY, W: r.W, H: 1}, ' ', ui.StyleDefault)
-		s.DrawTextTrunc(r.X+2, taintsY, r.W-4, ui.StyleDim, "Taints: "+strings.Join(selNode.Taints, ", "))
+		taintsText := "Taints: " + strings.Join(selNode.Taints, ", ")
+		taintsLine := ui.StyleDim.Render("  " + truncate(taintsText, width-4))
+		lines = append(lines, ui.PadRight(taintsLine, width))
 	} else {
-		s.FillRect(ui.Rect{X: r.X, Y: taintsY, W: r.W, H: 1}, ' ', ui.StyleDefault)
+		lines = append(lines, ui.FillWidth(width, ui.StyleDefault))
 	}
 
 	// ── Column headers ────────────────────────────────────────────────────────
-	hdrY := r.Y + 2
-	s.DrawTextTrunc(r.X, hdrY, r.W, ui.StyleHeader,
-		fmt.Sprintf("  %-5s %-*s %-20s %8s %8s",
-			"", nameColW(r.W), "POD", "NAMESPACE", "RESTARTS", "AGE"))
+	nameW := nameColW(width)
+	hdr := fmt.Sprintf("  %-5s %-*s %-20s %8s %8s",
+		"", nameW, "POD", "NAMESPACE", "RESTARTS", "AGE")
+	lines = append(lines, ui.StyleHeader.Render(ui.PadRight(hdr, width)))
 
 	// ── Pod rows ──────────────────────────────────────────────────────────────
-	contentTop := r.Y + 3
-	contentH := r.H - 5 // header + taints + col-hdr + hint + padding
+	contentH := height - 5 // header + taints + col-hdr + hint + padding
 	if contentH < 1 {
 		contentH = 1
 	}
@@ -118,13 +135,11 @@ func (v *NodeDetailView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 		scrollOffset = sel - contentH + 1
 	}
 
-	nameW := nameColW(r.W)
 	for i := scrollOffset; i < len(pods) && i-scrollOffset < contentH; i++ {
 		p := pods[i]
-		rowY := contentTop + i - scrollOffset
 		isSelected := i == sel
 
-		var style = ui.StyleDefault
+		style := ui.StyleDefault
 		if isSelected {
 			style = ui.StyleSelected
 		}
@@ -135,41 +150,49 @@ func (v *NodeDetailView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
 			iconStyle = style
 		}
 
-		// Fill row background.
-		s.FillRect(ui.Rect{X: r.X, Y: rowY, W: r.W, H: 1}, ' ', style)
-
-		// Icon.
-		s.DrawText(r.X+2, rowY, iconStyle, icon)
-
-		// Pod name.
-		nameStart := r.X + 2 + len([]rune(icon)) + 1
-		s.DrawTextTrunc(nameStart, rowY, nameW, style, p.Name)
-
-		// Namespace.
-		nsStart := nameStart + nameW + 1
 		nsStyle := ui.StyleNamespace
 		if isSelected {
 			nsStyle = style
 		}
-		s.DrawTextTrunc(nsStart, rowY, 20, nsStyle, p.Namespace)
 
-		// Restarts.
-		rstStart := nsStart + 21
-		s.DrawTextTrunc(rstStart, rowY, 8, style, fmt.Sprintf("%8d", p.Restarts))
+		var rowB strings.Builder
+		rowB.WriteString(iconStyle.Render("  " + icon + " "))
+		rowB.WriteString(style.Render(fmt.Sprintf("%-*s ", nameW, truncate(p.Name, nameW))))
+		rowB.WriteString(nsStyle.Render(fmt.Sprintf("%-20s ", truncate(p.Namespace, 20))))
+		rowB.WriteString(style.Render(fmt.Sprintf("%8d ", p.Restarts)))
+		rowB.WriteString(style.Render(fmt.Sprintf("%8s", p.Age)))
 
-		// Age.
-		ageStart := rstStart + 9
-		s.DrawTextTrunc(ageStart, rowY, 8, style, fmt.Sprintf("%8s", p.Age))
+		result := rowB.String()
+		runes := []rune(result)
+		if len(runes) < width {
+			result += style.Render(strings.Repeat(" ", width-len(runes)))
+		}
+		lines = append(lines, result)
 	}
 
 	if len(pods) == 0 {
-		s.DrawText(r.X+2, contentTop, ui.StyleDim, "No pods on this node.")
+		line := ui.StyleDim.Render("  No pods on this node.")
+		lines = append(lines, ui.PadRight(line, width))
+	}
+
+	// Fill remaining rows.
+	for len(lines) < height-1 {
+		lines = append(lines, ui.FillWidth(width, ui.StyleDefault))
 	}
 
 	// ── Hint bar ──────────────────────────────────────────────────────────────
-	hintY := r.Y + r.H - 1
-	s.DrawTextTrunc(r.X+2, hintY, r.W-4, ui.StyleDim,
-		fmt.Sprintf("j/k: navigate  l: open logs  Esc: back to heatmap  %d pods", len(pods)))
+	hint := fmt.Sprintf("j/k: navigate  l: open logs  Esc: back to heatmap  %d pods", len(pods))
+	lines = append(lines, ui.StyleDim.Render(ui.PadRight("  "+truncate(hint, width-4), width)))
+
+	// Ensure exact height.
+	for len(lines) < height {
+		lines = append(lines, ui.FillWidth(width, ui.StyleDefault))
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // nameColW returns the pod-name column width based on available screen width.
@@ -187,8 +210,8 @@ func nameColW(screenW int) int {
 	return w
 }
 
-// podStatusStyle returns the tcell.Style for a pod's status icon.
-func podStatusStyle(status string) tcell.Style {
+// podStatusStyle returns the lipgloss.Style for a pod's status icon.
+func podStatusStyle(status string) lipgloss.Style {
 	switch status {
 	case "Running":
 		return ui.StylePodRunning

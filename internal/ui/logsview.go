@@ -2,21 +2,22 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 )
 
 var (
-	styleLogsTitleBg = tcell.NewRGBColor(12, 18, 32)
-	styleLogsTitle   = tcell.StyleDefault.Background(styleLogsTitleBg).Foreground(tcell.NewRGBColor(130, 190, 255)).Bold(true)
-	styleLogsHint    = tcell.StyleDefault.Background(tcell.NewRGBColor(16, 18, 28)).Foreground(tcell.NewRGBColor(100, 105, 130))
-	styleLogsLine    = tcell.StyleDefault.Background(tcell.NewRGBColor(13, 14, 20)).Foreground(tcell.NewRGBColor(195, 200, 218))
-	styleLogsMarker  = tcell.StyleDefault.Background(tcell.NewRGBColor(13, 14, 20)).Foreground(tcell.NewRGBColor(70, 120, 210))
-	styleLogsAutoOn  = tcell.StyleDefault.Background(tcell.NewRGBColor(16, 18, 28)).Foreground(tcell.NewRGBColor(80, 200, 120)).Bold(true)
-	styleLogsAutoOff = tcell.StyleDefault.Background(tcell.NewRGBColor(16, 18, 28)).Foreground(tcell.NewRGBColor(100, 105, 130))
-	styleLogsBorder  = tcell.StyleDefault.Background(tcell.NewRGBColor(13, 14, 20)).Foreground(tcell.NewRGBColor(50, 80, 150))
+	styleLogsTitleBg lipgloss.Color = "#0C1220"
+	styleLogsTitle                  = lipgloss.NewStyle().Background(styleLogsTitleBg).Foreground(lipgloss.Color("#82BEFF")).Bold(true)
+	styleLogsHint                   = lipgloss.NewStyle().Background(lipgloss.Color("#10121C")).Foreground(lipgloss.Color("#646982"))
+	styleLogsLine                   = lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color("#C3C8DA"))
+	styleLogsMarker                 = lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color("#4678D2"))
+	styleLogsAutoOn                 = lipgloss.NewStyle().Background(lipgloss.Color("#10121C")).Foreground(lipgloss.Color("#50C878")).Bold(true)
+	styleLogsAutoOff                = lipgloss.NewStyle().Background(lipgloss.Color("#10121C")).Foreground(lipgloss.Color("#646982"))
+	styleLogsBorder                 = lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color("#325096"))
 )
 
 // CachedWrapLogs returns the wrapped form of state.LogsLines for lineW, using
@@ -33,8 +34,7 @@ func CachedWrapLogs(state *model.AppState, lineW int) []string {
 }
 
 // WrapLines splits each element of lines into segments of at most maxW runes,
-// returning a flat slice of display rows. Lines that fit within maxW are passed
-// through unchanged. If maxW <= 0 the input slice is returned as-is.
+// returning a flat slice of display rows.
 func WrapLines(lines []string, maxW int) []string {
 	if maxW <= 0 {
 		return lines
@@ -57,39 +57,53 @@ func WrapLines(lines []string, maxW int) []string {
 	return result
 }
 
-// DrawDescribeOverlay renders a scrollable describe output box within r.
-func DrawDescribeOverlay(s *Screen, r Rect, state *model.AppState) {
-	if r.W < 4 || r.H < 4 {
-		return
+// RenderDescribeOverlay renders a scrollable describe output box and returns it as a string.
+func RenderDescribeOverlay(width, height int, state *model.AppState) string {
+	if width < 4 || height < 4 {
+		return ""
 	}
-	for i := 1; i < r.H-1; i++ {
-		s.FillRect(Rect{X: r.X + 1, Y: r.Y + i, W: r.W - 2, H: 1}, ' ', styleLogsLine)
-	}
-	drawBorderOnly(s, r.X, r.Y, r.W, r.H, styleLogsBorder)
 
+	var lines []string
+
+	// Top border with title.
+	border := RenderBorder(width, height, styleLogsBorder)
 	title := " " + state.DescribeTitle + " "
-	titleX := r.X + (r.W-len([]rune(title)))/2
-	if titleX < r.X+1 {
-		titleX = r.X + 1
+	titleRunes := []rune(title)
+	titleStart := (width - len(titleRunes)) / 2
+	if titleStart < 1 {
+		titleStart = 1
 	}
-	s.DrawTextTrunc(titleX, r.Y, r.W-2, styleLogsTitle, title)
+	// Build top border with embedded title.
+	topBorderRunes := []rune(border[0])
+	for i, ch := range titleRunes {
+		pos := titleStart + i
+		if pos < len(topBorderRunes)-1 {
+			topBorderRunes[pos] = ch
+		}
+	}
+	lines = append(lines, styleLogsBorder.Render(string(topBorderRunes[:titleStart]))+
+		styleLogsTitle.Render(title)+
+		styleLogsBorder.Render(string(topBorderRunes[titleStart+len(titleRunes):])))
 
-	hintY := r.Y + 1
-	s.FillRect(Rect{X: r.X + 1, Y: hintY, W: r.W - 2, H: 1}, ' ', styleLogsHint)
+	// Hint/status row.
 	lineCountText := fmt.Sprintf("  %d lines  ", len(state.DescribeLines))
-	lineCountX := r.X + r.W - 1 - len([]rune(lineCountText))
-	if lineCountX > r.X+6 {
-		s.DrawText(lineCountX, hintY, styleLogsHint, lineCountText)
-		hintText := "  j/k: scroll  PgDn/PgUp: page  Esc: close"
-		hintW := lineCountX - (r.X + 2) - 1
-		s.DrawTextTrunc(r.X+2, hintY, hintW, styleLogsHint, hintText)
+	hintText := "  j/k: scroll  PgDn/PgUp: page  Esc: close"
+	hintW := width - 2 - len([]rune(lineCountText))
+	if hintW < 0 {
+		hintW = 0
 	}
+	hintRow := styleLogsBorder.Render("│") +
+		styleLogsHint.Render(PadRight(Truncate(hintText, hintW), hintW)) +
+		styleLogsHint.Render(lineCountText) +
+		styleLogsBorder.Render("│")
+	lines = append(lines, hintRow)
 
-	contentH := r.H - 3
+	// Content rows.
+	contentH := height - 3
 	if contentH < 1 {
-		return
+		contentH = 0
 	}
-	lineW := r.W - 6
+	lineW := width - 6
 	offset := state.DescribeOffset
 	maxOff := len(state.DescribeLines) - contentH
 	if maxOff < 0 {
@@ -103,54 +117,62 @@ func DrawDescribeOverlay(s *Screen, r Rect, state *model.AppState) {
 	}
 	for i := 0; i < contentH; i++ {
 		idx := offset + i
-		if idx >= len(state.DescribeLines) {
-			break
+		var content string
+		if idx < len(state.DescribeLines) {
+			marker := styleLogsMarker.Render("▸ ")
+			text := styleLogsLine.Render(PadRight(Truncate(state.DescribeLines[idx], lineW), lineW))
+			content = marker + text
+		} else {
+			content = styleLogsLine.Render(strings.Repeat(" ", lineW+2))
 		}
-		y := r.Y + 2 + i
-		s.DrawText(r.X+2, y, styleLogsMarker, "▸ ")
-		s.DrawTextTrunc(r.X+4, y, lineW, styleLogsLine, state.DescribeLines[idx])
+		lines = append(lines, styleLogsBorder.Render("│")+
+			styleLogsLine.Render(" ")+
+			content+
+			styleLogsLine.Render(" ")+
+			styleLogsBorder.Render("│"))
 	}
+
+	// Bottom border.
+	lines = append(lines, border[height-1])
+
+	return strings.Join(lines, "\n")
 }
 
-// DrawLogsView renders a bordered log streaming box within the content rect r.
-// Layout inside the box:
-//
-//	row 0      : top border with centred title
-//	row 1      : status strip (autoscroll + hint + line count)
-//	rows 2…H-2 : log content (hard-wrapped to fit the box width)
-//	row H-1    : bottom border
-func DrawLogsView(s *Screen, r Rect, state *model.AppState) {
-	if r.W < 4 || r.H < 4 {
-		return
+// RenderLogsView renders a bordered log streaming box and returns it as a string.
+func RenderLogsView(width, height int, state *model.AppState) string {
+	if width < 4 || height < 4 {
+		return ""
 	}
 
-	// ── fill interior background ───────────────────────────────────────────
-	for i := 1; i < r.H-1; i++ {
-		s.FillRect(Rect{X: r.X + 1, Y: r.Y + i, W: r.W - 2, H: 1}, ' ', styleLogsLine)
-	}
+	var lines []string
 
-	// ── border (drawn after fill so corners overwrite interior fill) ───────
-	drawBorderOnly(s, r.X, r.Y, r.W, r.H, styleLogsBorder)
-
-	// ── title centred on top border row ───────────────────────────────────
+	// Top border with title.
+	border := RenderBorder(width, height, styleLogsBorder)
 	podLabel := state.LogsNamespace + "/" + state.LogsPod
 	title := " Logs — " + podLabel
 	if state.LogsContainer != "" {
 		title += " [" + state.LogsContainer + "]"
 	}
 	title += " "
-	titleX := r.X + (r.W-len([]rune(title)))/2
-	if titleX < r.X+1 {
-		titleX = r.X + 1
+	titleRunes := []rune(title)
+	titleStart := (width - len(titleRunes)) / 2
+	if titleStart < 1 {
+		titleStart = 1
 	}
-	s.DrawTextTrunc(titleX, r.Y, r.W-2, styleLogsTitle, title)
+	topBorderRunes := []rune(border[0])
+	for i, ch := range titleRunes {
+		pos := titleStart + i
+		if pos < len(topBorderRunes)-1 {
+			topBorderRunes[pos] = ch
+		}
+	}
+	lines = append(lines, styleLogsBorder.Render(string(topBorderRunes[:titleStart]))+
+		styleLogsTitle.Render(title)+
+		styleLogsBorder.Render(string(topBorderRunes[titleStart+len(titleRunes):])))
 
-	// ── status strip (first interior row) ─────────────────────────────────
-	statusY := r.Y + 1
-	s.FillRect(Rect{X: r.X + 1, Y: statusY, W: r.W - 2, H: 1}, ' ', styleLogsHint)
-
+	// Status strip.
 	var autoText string
-	var autoStyle tcell.Style
+	var autoStyle lipgloss.Style
 	if state.LogsAutoScroll {
 		autoText = " Autoscroll: On  "
 		autoStyle = styleLogsAutoOn
@@ -158,31 +180,27 @@ func DrawLogsView(s *Screen, r Rect, state *model.AppState) {
 		autoText = " Autoscroll: Off "
 		autoStyle = styleLogsAutoOff
 	}
-	s.DrawText(r.X+2, statusY, autoStyle, autoText)
-
 	lineCountText := fmt.Sprintf("  %d lines  ", len(state.LogsLines))
-	lineCountX := r.X + r.W - 1 - len([]rune(lineCountText))
-	autoEndX := r.X + 2 + len([]rune(autoText))
-	if lineCountX > autoEndX+4 {
-		s.DrawText(lineCountX, statusY, styleLogsHint, lineCountText)
-		hintText := "  j/k: scroll  PgDn/PgUp: page  s: autoscroll  Esc: close"
-		hintW := lineCountX - autoEndX - 1
-		s.DrawTextTrunc(autoEndX, statusY, hintW, styleLogsHint, hintText)
+	hintText := "  j/k: scroll  PgDn/PgUp: page  s: autoscroll  Esc: close"
+	middleW := width - 2 - len([]rune(autoText)) - len([]rune(lineCountText))
+	if middleW < 0 {
+		middleW = 0
 	}
+	statusRow := styleLogsBorder.Render("│") +
+		autoStyle.Render(autoText) +
+		styleLogsHint.Render(PadRight(Truncate(hintText, middleW), middleW)) +
+		styleLogsHint.Render(lineCountText) +
+		styleLogsBorder.Render("│")
+	lines = append(lines, statusRow)
 
-	// ── log content (rows r.Y+2 … r.Y+r.H-2) ─────────────────────────────
-	contentH := r.H - 3 // top border(1) + status strip(1) + bottom border(1)
+	// Log content.
+	contentH := height - 3
 	if contentH < 1 {
-		return
+		contentH = 0
 	}
+	lineW := width - 6
 
-	// lineW reserves 2 chars for the entry marker ("▸ " or "  ").
-	// Must match the width used for scroll math in app.go (w-6).
-	lineW := r.W - 6
-
-	// Compute total display rows (for offset clamping).
 	totalRows := len(CachedWrapLogs(state, lineW))
-
 	offset := state.LogsOffset
 	if state.LogsAutoScroll {
 		offset = totalRows - contentH
@@ -203,7 +221,6 @@ func DrawLogsView(s *Screen, r Rect, state *model.AppState) {
 	}
 
 	// Render log entries with inline wrapping.
-	// First display row of each entry gets "▸ "; continuation rows get "  ".
 	displayRow := 0
 	for _, rawLine := range state.LogsLines {
 		if displayRow >= offset+contentH {
@@ -211,7 +228,6 @@ func DrawLogsView(s *Screen, r Rect, state *model.AppState) {
 		}
 		runes := []rune(rawLine)
 		first := true
-		// Each raw line produces at least one display row (even if empty).
 		for first || len(runes) > 0 {
 			var chunk string
 			if len(runes) <= lineW {
@@ -221,12 +237,20 @@ func DrawLogsView(s *Screen, r Rect, state *model.AppState) {
 				chunk = string(runes[:lineW])
 				runes = runes[lineW:]
 			}
-			if displayRow >= offset {
-				y := r.Y + 2 + (displayRow - offset)
+			if displayRow >= offset && displayRow < offset+contentH {
+				var marker string
 				if first {
-					s.DrawText(r.X+2, y, styleLogsMarker, "▸ ")
+					marker = styleLogsMarker.Render("▸ ")
+				} else {
+					marker = styleLogsLine.Render("  ")
 				}
-				s.DrawText(r.X+4, y, styleLogsLine, chunk)
+				content := styleLogsLine.Render(PadRight(chunk, lineW))
+				lines = append(lines, styleLogsBorder.Render("│")+
+					styleLogsLine.Render(" ")+
+					marker+
+					content+
+					styleLogsLine.Render(" ")+
+					styleLogsBorder.Render("│"))
 			}
 			displayRow++
 			first = false
@@ -235,4 +259,15 @@ func DrawLogsView(s *Screen, r Rect, state *model.AppState) {
 			}
 		}
 	}
+
+	// Fill remaining content rows.
+	for len(lines) < height-1 {
+		emptyContent := styleLogsLine.Render(strings.Repeat(" ", width-2))
+		lines = append(lines, styleLogsBorder.Render("│")+emptyContent+styleLogsBorder.Render("│"))
+	}
+
+	// Bottom border.
+	lines = append(lines, border[height-1])
+
+	return strings.Join(lines, "\n")
 }

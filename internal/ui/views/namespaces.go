@@ -3,7 +3,7 @@ package views
 import (
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 	"github.com/1homsi/kubecurses/internal/ui"
@@ -24,11 +24,13 @@ func (v *NamespacesView) SelectedRef(sel int) string {
 	return v.filteredNss[sel].Name
 }
 
-func (v *NamespacesView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
+func (v *NamespacesView) Render(width, height int, state *model.AppState) string {
 	v.filteredNss = filterNamespaces(state)
 	m := &namespacesModel{nss: v.filteredNss}
 	sel := state.Selection[model.TabNamespaces]
-	v.scrollOffset = ui.DrawTable(s, r, m, sel, v.scrollOffset)
+	var rendered string
+	rendered, v.scrollOffset = ui.RenderTable(width, height, m, sel, v.scrollOffset)
+	return rendered
 }
 
 func filterNamespaces(state *model.AppState) []model.Namespace {
@@ -63,6 +65,6 @@ func (m *namespacesModel) Rows() [][]string {
 	return rows
 }
 
-func (m *namespacesModel) StyleForRow(_ int) tcell.Style {
+func (m *namespacesModel) StyleForRow(_ int) lipgloss.Style {
 	return ui.StyleDefault
 }

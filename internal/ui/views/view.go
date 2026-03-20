@@ -3,13 +3,12 @@ package views
 
 import (
 	"github.com/1homsi/kubecurses/internal/model"
-	"github.com/1homsi/kubecurses/internal/ui"
 )
 
 // View is implemented by each resource-specific view.
 type View interface {
-	// Draw renders the view into the given rectangle.
-	Draw(s *ui.Screen, r ui.Rect, state *model.AppState)
+	// Render returns the view content as a string for the given dimensions.
+	Render(width, height int, state *model.AppState) string
 }
 
 // podIcon returns a status icon for a pod, falling back to a text label when
@@ -38,4 +37,3 @@ func podIcon(status string, noIcons bool) string {
 		return "✖"
 	}
 }
-

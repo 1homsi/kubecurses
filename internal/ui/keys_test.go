@@ -3,24 +3,24 @@ package ui
 import (
 	"testing"
 
-	"github.com/gdamore/tcell/v2"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestEventToAction_ExecOpen(t *testing.T) {
-	ev := tcell.NewEventKey(tcell.KeyRune, 'e', tcell.ModNone)
-	if got := EventToAction(ev); got != ActionExecOpen {
-		t.Errorf("EventToAction('e') = %v, want ActionExecOpen (%v)", got, ActionExecOpen)
+func TestKeyToAction_ExecOpen(t *testing.T) {
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}}
+	if got := KeyToAction(msg); got != ActionExecOpen {
+		t.Errorf("KeyToAction('e') = %v, want ActionExecOpen (%v)", got, ActionExecOpen)
 	}
 }
 
-func TestEventToAction_LogsOpen(t *testing.T) {
-	ev := tcell.NewEventKey(tcell.KeyRune, 'l', tcell.ModNone)
-	if got := EventToAction(ev); got != ActionLogsOpen {
-		t.Errorf("EventToAction('l') = %v, want ActionLogsOpen (%v)", got, ActionLogsOpen)
+func TestKeyToAction_LogsOpen(t *testing.T) {
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
+	if got := KeyToAction(msg); got != ActionLogsOpen {
+		t.Errorf("KeyToAction('l') = %v, want ActionLogsOpen (%v)", got, ActionLogsOpen)
 	}
 }
 
-func TestEventToAction_ExecAndLogsDistinct(t *testing.T) {
+func TestKeyToAction_ExecAndLogsDistinct(t *testing.T) {
 	if ActionExecOpen == ActionLogsOpen {
 		t.Error("ActionExecOpen and ActionLogsOpen must be distinct constants")
 	}

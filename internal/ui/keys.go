@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/gdamore/tcell/v2"
+import tea "github.com/charmbracelet/bubbletea"
 
 // Action represents a logical user action, decoupled from the physical key.
 type Action int
@@ -38,109 +38,92 @@ const (
 	ActionDescribe
 )
 
-// EventToAction converts a tcell event into a logical Action for normal mode.
-// Returns ActionNone for unrecognised events.
-func EventToAction(ev tcell.Event) Action {
-	evKey, ok := ev.(*tcell.EventKey)
-	if !ok {
-		return ActionNone
-	}
-
-	if evKey.Key() == tcell.KeyCtrlC {
+// KeyToAction converts a tea.KeyMsg into a logical Action for normal mode.
+// Returns ActionNone for unrecognised keys.
+func KeyToAction(msg tea.KeyMsg) Action {
+	switch msg.Type {
+	case tea.KeyCtrlC:
 		return ActionQuit
-	}
-
-	switch evKey.Key() {
-	case tcell.KeyTab:
+	case tea.KeyTab:
 		return ActionNextTab
-	case tcell.KeyBacktab:
+	case tea.KeyShiftTab:
 		return ActionPrevTab
-	case tcell.KeyUp:
+	case tea.KeyUp:
 		return ActionMoveUp
-	case tcell.KeyDown:
+	case tea.KeyDown:
 		return ActionMoveDown
-	case tcell.KeyLeft:
+	case tea.KeyLeft:
 		return ActionMoveLeft
-	case tcell.KeyRight:
+	case tea.KeyRight:
 		return ActionMoveRight
-	case tcell.KeyPgUp:
+	case tea.KeyPgUp:
 		return ActionPageUp
-	case tcell.KeyPgDn:
+	case tea.KeyPgDown:
 		return ActionPageDown
-	case tcell.KeyEsc:
+	case tea.KeyEscape:
 		return ActionSearchCancel
-	}
-
-	switch evKey.Key() {
-	case tcell.KeyEnter:
+	case tea.KeyEnter:
 		return ActionConfirm
 	}
 
-	switch evKey.Rune() {
-	case 'q', 'Q':
+	switch msg.String() {
+	case "q", "Q":
 		return ActionQuit
-	case 'j':
+	case "j":
 		return ActionMoveDown
-	case 'k':
+	case "k":
 		return ActionMoveUp
-	case 'h':
+	case "h":
 		return ActionMoveLeft
-	case 'l':
+	case "l":
 		return ActionLogsOpen
-	case 's':
+	case "s":
 		return ActionLogsToggleScroll
-	case 'c':
+	case "c":
 		return ActionSwitchCluster
-	case 'r':
+	case "r":
 		return ActionRefresh
-	case '/':
+	case "/":
 		return ActionSearchOpen
-	case '?':
+	case "?":
 		return ActionHelp
-	case '1':
+	case "1":
 		return ActionTab1
-	case '2':
+	case "2":
 		return ActionTab2
-	case '3':
+	case "3":
 		return ActionTab3
-	case '4':
+	case "4":
 		return ActionTab4
-	case '5':
+	case "5":
 		return ActionTab5
-	case '6':
+	case "6":
 		return ActionTab6
-	case 'e':
+	case "e":
 		return ActionExecOpen
-	case 'n':
+	case "n":
 		return ActionSwitchNamespace
-	case 'd':
+	case "d":
 		return ActionDescribe
 	}
 
 	return ActionNone
 }
 
-// SearchEventToAction converts a tcell event while in search mode.
-func SearchEventToAction(ev tcell.Event) Action {
-	evKey, ok := ev.(*tcell.EventKey)
-	if !ok {
-		return ActionNone
-	}
-
-	if evKey.Key() == tcell.KeyCtrlC {
+// SearchKeyToAction converts a tea.KeyMsg while in search mode.
+func SearchKeyToAction(msg tea.KeyMsg) Action {
+	switch msg.Type {
+	case tea.KeyCtrlC:
 		return ActionQuit
-	}
-
-	switch evKey.Key() {
-	case tcell.KeyEsc:
+	case tea.KeyEscape:
 		return ActionSearchCancel
-	case tcell.KeyEnter:
+	case tea.KeyEnter:
 		return ActionSearchCommit
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
+	case tea.KeyBackspace:
 		return ActionSearchBack
 	}
 
-	if evKey.Rune() != 0 {
+	if len(msg.Runes) > 0 {
 		return ActionSearchAppend
 	}
 

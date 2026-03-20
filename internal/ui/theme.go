@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // InitTheme applies a color theme based on the preference string.
@@ -69,134 +69,134 @@ func detectDarkMode() bool {
 // called before the first screen draw (i.e. before app.New).
 func ApplyLightTheme() {
 	// ── color primitives ─────────────────────────────────────────────────
-	colorBg = tcell.NewRGBColor(248, 249, 253)
-	colorNodeBg = tcell.NewRGBColor(232, 235, 248)
-	colorHeaderBg = tcell.NewRGBColor(225, 228, 242)
-	colorTabActiveBg = tcell.NewRGBColor(0, 90, 180)
-	colorTabIdleBg = tcell.NewRGBColor(218, 222, 238)
-	colorStatusBg = tcell.NewRGBColor(235, 238, 250)
-	colorSelectedBg = tcell.NewRGBColor(0, 80, 160)
+	colorBg = lipgloss.Color("#F8F9FD")
+	colorNodeBg = lipgloss.Color("#E8EBF8")
+	colorHeaderBg = lipgloss.Color("#E1E4F2")
+	colorTabActiveBg = lipgloss.Color("#005AB4")
+	colorTabIdleBg = lipgloss.Color("#DADEEE")
+	colorStatusBg = lipgloss.Color("#EBEEFA")
+	colorSelectedBg = lipgloss.Color("#0050A0")
 
-	colorText = tcell.NewRGBColor(20, 22, 45)
-	colorDim = tcell.NewRGBColor(115, 120, 155)
-	colorGreen = tcell.NewRGBColor(15, 135, 65)
-	colorAmber = tcell.NewRGBColor(150, 100, 0)
-	colorOrange = tcell.NewRGBColor(170, 75, 0)
-	colorRed = tcell.NewRGBColor(175, 25, 25)
-	colorBlue = tcell.NewRGBColor(30, 100, 210)
-	colorNodeName = tcell.NewRGBColor(20, 90, 200)
-	colorPodName = tcell.NewRGBColor(40, 55, 140)
-	colorNamespace = tcell.NewRGBColor(90, 100, 150)
+	colorText = lipgloss.Color("#14162D")
+	colorDim = lipgloss.Color("#73789B")
+	colorGreen = lipgloss.Color("#0F8741")
+	colorAmber = lipgloss.Color("#966400")
+	colorOrange = lipgloss.Color("#AA4B00")
+	colorRed = lipgloss.Color("#AF1919")
+	colorBlue = lipgloss.Color("#1E64D2")
+	colorNodeName = lipgloss.Color("#145AC8")
+	colorPodName = lipgloss.Color("#28378C")
+	colorNamespace = lipgloss.Color("#5A6496")
 
 	// ── exported styles (colors.go) ──────────────────────────────────────
-	StyleDefault = tcell.StyleDefault.Foreground(colorText).Background(colorBg)
-	StyleHeader = tcell.StyleDefault.Foreground(colorDim).Background(colorHeaderBg).Bold(true)
-	StyleTabActive = tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(colorTabActiveBg).Bold(true)
-	StyleTabInactive = tcell.StyleDefault.Foreground(colorDim).Background(colorTabIdleBg)
-	StyleSelected = tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(colorSelectedBg).Bold(true)
-	StyleStatusBar = tcell.StyleDefault.Foreground(colorDim).Background(colorStatusBg)
-	StyleError = tcell.StyleDefault.Foreground(colorRed).Background(colorBg).Bold(true)
+	StyleDefault = lipgloss.NewStyle().Foreground(colorText).Background(colorBg)
+	StyleHeader = lipgloss.NewStyle().Foreground(colorDim).Background(colorHeaderBg).Bold(true)
+	StyleTabActive = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(colorTabActiveBg).Bold(true)
+	StyleTabInactive = lipgloss.NewStyle().Foreground(colorDim).Background(colorTabIdleBg)
+	StyleSelected = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(colorSelectedBg).Bold(true)
+	StyleStatusBar = lipgloss.NewStyle().Foreground(colorDim).Background(colorStatusBg)
+	StyleError = lipgloss.NewStyle().Foreground(colorRed).Background(colorBg).Bold(true)
 
-	StyleNodeHeader = tcell.StyleDefault.Foreground(colorText).Background(colorNodeBg).Bold(true)
-	StyleNodeReadyDot = tcell.StyleDefault.Foreground(colorGreen).Background(colorNodeBg).Bold(true)
-	StyleNodeNotReadyDot = tcell.StyleDefault.Foreground(colorRed).Background(colorNodeBg).Bold(true)
-	StyleNodeMeta = tcell.StyleDefault.Foreground(colorBlue).Background(colorNodeBg)
+	StyleNodeHeader = lipgloss.NewStyle().Foreground(colorText).Background(colorNodeBg).Bold(true)
+	StyleNodeReadyDot = lipgloss.NewStyle().Foreground(colorGreen).Background(colorNodeBg).Bold(true)
+	StyleNodeNotReadyDot = lipgloss.NewStyle().Foreground(colorRed).Background(colorNodeBg).Bold(true)
+	StyleNodeMeta = lipgloss.NewStyle().Foreground(colorBlue).Background(colorNodeBg)
 
-	StylePodRunning = tcell.StyleDefault.Foreground(colorGreen).Background(colorBg)
-	StylePodPending = tcell.StyleDefault.Foreground(colorAmber).Background(colorBg)
-	StylePodFailed = tcell.StyleDefault.Foreground(colorRed).Background(colorBg)
-	StylePodDefault = tcell.StyleDefault.Foreground(colorText).Background(colorBg)
+	StylePodRunning = lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg)
+	StylePodPending = lipgloss.NewStyle().Foreground(colorAmber).Background(colorBg)
+	StylePodFailed = lipgloss.NewStyle().Foreground(colorRed).Background(colorBg)
+	StylePodDefault = lipgloss.NewStyle().Foreground(colorText).Background(colorBg)
 
-	StyleRestartsWarn = tcell.StyleDefault.Foreground(colorOrange).Background(colorBg)
-	StyleRestartsCrit = tcell.StyleDefault.Foreground(colorRed).Background(colorBg).Bold(true)
+	StyleRestartsWarn = lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg)
+	StyleRestartsCrit = lipgloss.NewStyle().Foreground(colorRed).Background(colorBg).Bold(true)
 
-	StyleNodeReady = tcell.StyleDefault.Foreground(colorGreen).Background(colorBg)
-	StyleNodeNotReady = tcell.StyleDefault.Foreground(colorRed).Background(colorBg)
+	StyleNodeReady = lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg)
+	StyleNodeNotReady = lipgloss.NewStyle().Foreground(colorRed).Background(colorBg)
 
-	StyleDim = tcell.StyleDefault.Foreground(colorDim).Background(colorBg)
-	StyleSeparator = tcell.StyleDefault.Foreground(tcell.NewRGBColor(170, 175, 210)).Background(colorBg)
-	StyleWarning = tcell.StyleDefault.Foreground(colorAmber).Background(tcell.NewRGBColor(255, 248, 215)).Bold(true)
-	StylePendingReason = tcell.StyleDefault.Foreground(colorDim).Background(colorBg)
+	StyleDim = lipgloss.NewStyle().Foreground(colorDim).Background(colorBg)
+	StyleSeparator = lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAFD2")).Background(colorBg)
+	StyleWarning = lipgloss.NewStyle().Foreground(colorAmber).Background(lipgloss.Color("#FFF8D7")).Bold(true)
+	StylePendingReason = lipgloss.NewStyle().Foreground(colorDim).Background(colorBg)
 
-	StyleMetricsOK = tcell.StyleDefault.Foreground(colorGreen).Background(colorNodeBg)
-	StyleMetricsWarn = tcell.StyleDefault.Foreground(colorAmber).Background(colorNodeBg)
-	StyleMetricsCrit = tcell.StyleDefault.Foreground(colorRed).Background(colorNodeBg).Bold(true)
+	StyleMetricsOK = lipgloss.NewStyle().Foreground(colorGreen).Background(colorNodeBg)
+	StyleMetricsWarn = lipgloss.NewStyle().Foreground(colorAmber).Background(colorNodeBg)
+	StyleMetricsCrit = lipgloss.NewStyle().Foreground(colorRed).Background(colorNodeBg).Bold(true)
 
-	StyleNodeName = tcell.StyleDefault.Foreground(colorNodeName).Background(colorNodeBg).Bold(true)
-	StylePodName = tcell.StyleDefault.Foreground(colorPodName).Background(colorBg)
-	StyleNamespace = tcell.StyleDefault.Foreground(colorNamespace).Background(colorBg)
+	StyleNodeName = lipgloss.NewStyle().Foreground(colorNodeName).Background(colorNodeBg).Bold(true)
+	StylePodName = lipgloss.NewStyle().Foreground(colorPodName).Background(colorBg)
+	StyleNamespace = lipgloss.NewStyle().Foreground(colorNamespace).Background(colorBg)
 
-	StyleXrayNsHeader = tcell.StyleDefault.
-		Foreground(tcell.NewRGBColor(0, 120, 110)).
-		Background(tcell.NewRGBColor(215, 238, 235)).
+	StyleXrayNsHeader = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00786E")).
+		Background(lipgloss.Color("#D7EEEB")).
 		Bold(true)
-	StyleXrayConnector = tcell.StyleDefault.
-		Foreground(tcell.NewRGBColor(155, 160, 195)).
+	StyleXrayConnector = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#9BA0C3")).
 		Background(colorBg)
 
-	StyleHeatmapRunning = tcell.StyleDefault.Foreground(colorGreen).Background(colorBg)
-	StyleHeatmapPending = tcell.StyleDefault.Foreground(colorAmber).Background(colorBg)
-	StyleHeatmapFailed = tcell.StyleDefault.Foreground(colorRed).Background(colorBg).Bold(true)
-	StyleHeatmapTerm = tcell.StyleDefault.Foreground(colorDim).Background(colorBg)
-	StyleHeatmapDefault = tcell.StyleDefault.Foreground(colorBlue).Background(colorBg)
-	StyleHeatmapNodeSel = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(160, 110, 0)).
+	StyleHeatmapRunning = lipgloss.NewStyle().Foreground(colorGreen).Background(colorNodeBg)
+	StyleHeatmapPending = lipgloss.NewStyle().Foreground(colorAmber).Background(colorNodeBg)
+	StyleHeatmapFailed = lipgloss.NewStyle().Foreground(colorRed).Background(colorNodeBg).Bold(true)
+	StyleHeatmapTerm = lipgloss.NewStyle().Foreground(colorDim).Background(colorNodeBg)
+	StyleHeatmapDefault = lipgloss.NewStyle().Foreground(colorBlue).Background(colorNodeBg)
+	StyleHeatmapNodeSel = lipgloss.NewStyle().
+		Background(lipgloss.Color("#A06E00")).
 		Foreground(colorBg)
 
 	// ── logs overlay private styles (logsview.go) ────────────────────────
-	logsBg := tcell.NewRGBColor(215, 220, 240)
+	logsBg := lipgloss.Color("#D7DCF0")
 	styleLogsTitleBg = logsBg
-	styleLogsTitle = tcell.StyleDefault.
+	styleLogsTitle = lipgloss.NewStyle().
 		Background(logsBg).
-		Foreground(tcell.NewRGBColor(30, 100, 210)).
+		Foreground(lipgloss.Color("#1E64D2")).
 		Bold(true)
-	styleLogsHint = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(225, 228, 242)).
-		Foreground(tcell.NewRGBColor(115, 120, 155))
-	styleLogsLine = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(240, 242, 252)).
-		Foreground(tcell.NewRGBColor(20, 22, 45))
-	styleLogsMarker = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(240, 242, 252)).
-		Foreground(tcell.NewRGBColor(40, 100, 200))
-	styleLogsAutoOn = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(225, 228, 242)).
-		Foreground(tcell.NewRGBColor(15, 135, 65)).
+	styleLogsHint = lipgloss.NewStyle().
+		Background(lipgloss.Color("#E1E4F2")).
+		Foreground(lipgloss.Color("#73789B"))
+	styleLogsLine = lipgloss.NewStyle().
+		Background(lipgloss.Color("#F0F2FC")).
+		Foreground(lipgloss.Color("#14162D"))
+	styleLogsMarker = lipgloss.NewStyle().
+		Background(lipgloss.Color("#F0F2FC")).
+		Foreground(lipgloss.Color("#2864C8"))
+	styleLogsAutoOn = lipgloss.NewStyle().
+		Background(lipgloss.Color("#E1E4F2")).
+		Foreground(lipgloss.Color("#0F8741")).
 		Bold(true)
-	styleLogsAutoOff = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(225, 228, 242)).
-		Foreground(tcell.NewRGBColor(115, 120, 155))
-	styleLogsBorder = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(240, 242, 252)).
-		Foreground(tcell.NewRGBColor(80, 120, 200))
+	styleLogsAutoOff = lipgloss.NewStyle().
+		Background(lipgloss.Color("#E1E4F2")).
+		Foreground(lipgloss.Color("#73789B"))
+	styleLogsBorder = lipgloss.NewStyle().
+		Background(lipgloss.Color("#F0F2FC")).
+		Foreground(lipgloss.Color("#5078C8"))
 
 	// ── help overlay private styles (help.go) ────────────────────────────
-	helpBg := tcell.NewRGBColor(230, 233, 248)
-	styleHelpBg = tcell.StyleDefault.Background(helpBg).Foreground(tcell.NewRGBColor(20, 22, 45))
-	styleHelpTitle = tcell.StyleDefault.Background(helpBg).Foreground(tcell.NewRGBColor(20, 90, 200)).Bold(true)
-	styleHelpKey = tcell.StyleDefault.Background(helpBg).Foreground(tcell.NewRGBColor(20, 90, 200))
-	styleHelpSection = tcell.StyleDefault.Background(helpBg).Foreground(tcell.NewRGBColor(15, 135, 65)).Bold(true)
-	styleHelpDim = tcell.StyleDefault.Background(helpBg).Foreground(tcell.NewRGBColor(115, 120, 155))
+	helpBg := lipgloss.Color("#E6E9F8")
+	styleHelpBg = lipgloss.NewStyle().Background(helpBg).Foreground(lipgloss.Color("#14162D"))
+	styleHelpTitle = lipgloss.NewStyle().Background(helpBg).Foreground(lipgloss.Color("#145AC8")).Bold(true)
+	styleHelpKey = lipgloss.NewStyle().Background(helpBg).Foreground(lipgloss.Color("#145AC8"))
+	styleHelpSection = lipgloss.NewStyle().Background(helpBg).Foreground(lipgloss.Color("#0F8741")).Bold(true)
+	styleHelpDim = lipgloss.NewStyle().Background(helpBg).Foreground(lipgloss.Color("#73789B"))
 
 	// ── cluster picker overlay private styles (picker.go) ────────────────
-	stylePickerBg = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(248, 249, 253)).
-		Foreground(tcell.NewRGBColor(20, 22, 45))
-	stylePickerTitle = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(248, 249, 253)).
-		Foreground(tcell.NewRGBColor(20, 90, 200)).
+	stylePickerBg = lipgloss.NewStyle().
+		Background(lipgloss.Color("#F8F9FD")).
+		Foreground(lipgloss.Color("#14162D"))
+	stylePickerTitle = lipgloss.NewStyle().
+		Background(lipgloss.Color("#F8F9FD")).
+		Foreground(lipgloss.Color("#145AC8")).
 		Bold(true)
-	stylePickerItem = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(232, 235, 248)).
-		Foreground(tcell.NewRGBColor(20, 22, 45))
-	stylePickerSelected = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(0, 80, 160)).
-		Foreground(tcell.ColorWhite).
+	stylePickerItem = lipgloss.NewStyle().
+		Background(lipgloss.Color("#E8EBF8")).
+		Foreground(lipgloss.Color("#14162D"))
+	stylePickerSelected = lipgloss.NewStyle().
+		Background(lipgloss.Color("#0050A0")).
+		Foreground(lipgloss.Color("#FFFFFF")).
 		Bold(true)
-	stylePickerCurrent = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(232, 235, 248)).
-		Foreground(tcell.NewRGBColor(15, 135, 65))
-	stylePickerHint = tcell.StyleDefault.
-		Background(tcell.NewRGBColor(232, 235, 248)).
-		Foreground(tcell.NewRGBColor(115, 120, 155))
+	stylePickerCurrent = lipgloss.NewStyle().
+		Background(lipgloss.Color("#E8EBF8")).
+		Foreground(lipgloss.Color("#0F8741"))
+	stylePickerHint = lipgloss.NewStyle().
+		Background(lipgloss.Color("#E8EBF8")).
+		Foreground(lipgloss.Color("#73789B"))
 }

@@ -214,7 +214,8 @@ Press `/` to open the search bar. Start typing — rows are filtered live by pod
 ## Stack
 
 - **Go 1.22**
-- **[tcell/v2](https://github.com/gdamore/tcell)** — terminal rendering
+- **[Bubble Tea](https://github.com/charmbracelet/bubbletea)** — event loop, input, alternate screen
+- **[Lip Gloss](https://github.com/charmbracelet/lipgloss)** — terminal styling and layout composition
 - **[client-go](https://github.com/kubernetes/client-go)** — Kubernetes API, SharedInformerFactory
 - No metrics-server dependency — gracefully degrades when absent
 

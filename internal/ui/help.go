@@ -2,16 +2,17 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (
-	styleHelpBg      = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(220, 222, 235))
-	styleHelpTitle   = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(130, 190, 255)).Bold(true)
-	styleHelpKey     = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(130, 190, 255))
-	styleHelpSection = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(80, 200, 120)).Bold(true)
-	styleHelpDim     = tcell.StyleDefault.Background(tcell.NewRGBColor(18, 22, 38)).Foreground(tcell.NewRGBColor(100, 105, 130))
+	styleHelpBg      = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#DCDEEB"))
+	styleHelpTitle   = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#82BEFF")).Bold(true)
+	styleHelpKey     = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#82BEFF"))
+	styleHelpSection = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#50C878")).Bold(true)
+	styleHelpDim     = lipgloss.NewStyle().Background(lipgloss.Color("#121626")).Foreground(lipgloss.Color("#646982"))
 )
 
 type helpLine struct {
@@ -26,7 +27,7 @@ var helpLines = []helpLine{
 	{key: "", desc: ""},
 	{key: "", desc: "Tabs"},
 	{key: "Tab / Shift+Tab", desc: "Next / previous tab"},
-	{key: "1  2  3  4  5", desc: "Jump to tab directly"},
+	{key: "1  2  3  4  5  6", desc: "Jump to tab directly"},
 	{key: "", desc: ""},
 	{key: "", desc: "Actions"},
 	{key: "l", desc: "Stream logs for selected pod"},
@@ -48,9 +49,8 @@ var helpLines = []helpLine{
 	{key: "exit / Ctrl+D", desc: "End session, return to TUI"},
 }
 
-// DrawHelp renders a centered help overlay on top of the current screen.
-// Press any key to dismiss.
-func DrawHelp(s *Screen, screenW, screenH int) {
+// RenderHelp renders a centered help overlay and returns it as a multi-line string.
+func RenderHelp(screenW, screenH int) string {
 	const boxW = 46
 	w := boxW
 	if w > screenW-4 {
@@ -58,34 +58,64 @@ func DrawHelp(s *Screen, screenW, screenH int) {
 	}
 	// border(2) + blank after title(1) + content(N) + blank before hint(1) + hint(1)
 	h := len(helpLines) + 5
-	bx := (screenW - w) / 2
-	by := (screenH - h) / 2
 
-	for row := by; row < by+h; row++ {
-		s.FillRect(Rect{X: bx, Y: row, W: w, H: 1}, ' ', styleHelpBg)
-	}
-	drawBox(s, bx, by, w, h)
+	var lines []string
 
+	// Top border with title.
+	borderStyle := stylePickerItem
+	topBorder := "╭" + strings.Repeat("─", w-2) + "╮"
 	title := " Keyboard Shortcuts "
-	titleX := bx + (w-len([]rune(title)))/2
-	s.DrawText(titleX, by, styleHelpTitle, title)
+	titleRunes := []rune(title)
+	titleStart := (w - len(titleRunes)) / 2
+	if titleStart < 1 {
+		titleStart = 1
+	}
+	topRunes := []rune(topBorder)
+	for i, ch := range titleRunes {
+		pos := titleStart + i
+		if pos < len(topRunes)-1 {
+			topRunes[pos] = ch
+		}
+	}
+	lines = append(lines, borderStyle.Render(string(topRunes[:titleStart]))+
+		styleHelpTitle.Render(title)+
+		borderStyle.Render(string(topRunes[titleStart+len(titleRunes):])))
 
+	// Blank row.
+	lines = append(lines, borderStyle.Render("│")+styleHelpBg.Render(strings.Repeat(" ", w-2))+borderStyle.Render("│"))
+
+	// Help content.
 	const keyColW = 18
-	y := by + 2
 	for _, l := range helpLines {
 		if l.key == "" {
 			if l.desc != "" {
-				s.DrawText(bx+2, y, styleHelpSection, l.desc)
+				content := styleHelpSection.Render(PadRight(l.desc, w-4))
+				lines = append(lines, borderStyle.Render("│")+styleHelpBg.Render(" ")+content+styleHelpBg.Render(" ")+borderStyle.Render("│"))
+			} else {
+				lines = append(lines, borderStyle.Render("│")+styleHelpBg.Render(strings.Repeat(" ", w-2))+borderStyle.Render("│"))
 			}
-			y++
 			continue
 		}
-		s.DrawText(bx+2, y, styleHelpKey, fmt.Sprintf("%-*s", keyColW, l.key))
-		s.DrawText(bx+2+keyColW, y, styleHelpBg, l.desc)
-		y++
+		keyText := styleHelpKey.Render(fmt.Sprintf("%-*s", keyColW, l.key))
+		descText := styleHelpBg.Render(PadRight(l.desc, w-4-keyColW))
+		lines = append(lines, borderStyle.Render("│")+styleHelpBg.Render(" ")+keyText+descText+styleHelpBg.Render(" ")+borderStyle.Render("│"))
 	}
 
-	hintY := by + h - 2
-	s.FillRect(Rect{X: bx + 1, Y: hintY, W: w - 2, H: 1}, ' ', styleHelpDim)
-	s.DrawTextTrunc(bx+2, hintY, w-4, styleHelpDim, "  Press any key to close  ")
+	// Blank row.
+	lines = append(lines, borderStyle.Render("│")+styleHelpBg.Render(strings.Repeat(" ", w-2))+borderStyle.Render("│"))
+
+	// Hint row.
+	hint := "  Press any key to close  "
+	hintContent := styleHelpDim.Render(PadRight(hint, w-2))
+	lines = append(lines, borderStyle.Render("│")+hintContent+borderStyle.Render("│"))
+
+	// Bottom border.
+	lines = append(lines, borderStyle.Render("╰"+strings.Repeat("─", w-2)+"╯"))
+
+	// Pad to h.
+	for len(lines) < h {
+		lines = append(lines, borderStyle.Render("│")+styleHelpBg.Render(strings.Repeat(" ", w-2))+borderStyle.Render("│"))
+	}
+
+	return strings.Join(lines, "\n")
 }

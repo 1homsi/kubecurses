@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 	"github.com/1homsi/kubecurses/internal/ui"
@@ -49,14 +49,12 @@ type NodeOverviewView struct {
 }
 
 // dynCols computes dynamic column widths from row width w.
-// Right block: STATUS(10)+READY(6)+REST(5)+AGE(11) = 32 chars, right-anchored.
-// Remaining space split 2:1 between NAME and NAMESPACE/VERSION columns.
 func dynCols(w int) (nameW, nsW, statusAt int) {
 	statusAt = w - 32
 	if statusAt < 40 {
 		statusAt = 40
 	}
-	avail := statusAt - 4 // 4-char indent (icon + spaces)
+	avail := statusAt - 4
 	nameW = avail * 2 / 3
 	if nameW < 20 {
 		nameW = 20
@@ -69,7 +67,6 @@ func dynCols(w int) (nameW, nsW, statusAt int) {
 	return
 }
 
-// buildRows groups pods under their node, injects warning/reason rows.
 func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRow {
 	byNode := make(map[string][]model.Pod, len(state.Nodes))
 	var unscheduled []model.Pod
@@ -91,7 +88,6 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 		}
 	}
 
-	// Sort: NotReady first, then by pod count descending.
 	nodes := make([]model.Node, len(state.Nodes))
 	copy(nodes, state.Nodes)
 	sort.Slice(nodes, func(i, j int) bool {
@@ -103,7 +99,6 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 		return len(byNode[nodes[i].Name]) > len(byNode[nodes[j].Name])
 	})
 
-	// ── scheduling imbalance detection ──────────────────────────────────
 	var warningRows []ovRow
 	if len(nodes) > 1 {
 		totalPods := 0
@@ -139,7 +134,6 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 		rows = append(rows, ovRow{kind: rkNode, node: n, podCount: len(pods)})
 		for _, p := range pods {
 			rows = append(rows, ovRow{kind: rkPod, pod: p})
-			// ── pending pod explainer ────────────────────────────────────
 			if p.Status == "Pending" && p.PendingReason != "" {
 				rows = append(rows, ovRow{kind: rkReason, text: p.PendingReason})
 			}
@@ -162,7 +156,7 @@ func (v *NodeOverviewView) buildRows(state *model.AppState, query string) []ovRo
 	return append(warningRows, rows...)
 }
 
-func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
+func (v *NodeOverviewView) Render(width, height int, state *model.AppState) string {
 	key := ovCacheKey{state.PodGeneration, state.NodeGeneration, state.SearchQuery[model.TabNodeOverview], state.Namespace, state.NamespaceFilter}
 	if !v.cacheValid || key != v.cacheKey {
 		v.cachedRows = v.buildRows(state, state.SearchQuery[model.TabNodeOverview])
@@ -177,53 +171,45 @@ func (v *NodeOverviewView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) 
 		state.Selection[model.TabNodeOverview] = sel
 	}
 
-	v.drawHeader(s, r.X, r.Y, r.W)
-	content := ui.Rect{X: r.X, Y: r.Y + 1, W: r.W, H: r.H - 1}
+	var lines []string
+	lines = append(lines, v.renderHeader(width))
+	contentH := height - 1
 
 	if len(v.rows) > 0 {
 		if sel < v.scrollOffset {
 			v.scrollOffset = sel
 		}
-		if sel >= v.scrollOffset+content.H {
-			v.scrollOffset = sel - content.H + 1
+		if sel >= v.scrollOffset+contentH {
+			v.scrollOffset = sel - contentH + 1
 		}
 		if v.scrollOffset < 0 {
 			v.scrollOffset = 0
 		}
 	}
 
-	for i := 0; i < content.H; i++ {
+	for i := 0; i < contentH; i++ {
 		rowIdx := v.scrollOffset + i
-		y := content.Y + i
 		if rowIdx >= len(v.rows) {
-			s.FillRect(ui.Rect{X: content.X, Y: y, W: content.W, H: 1}, ' ', ui.StyleDefault)
+			lines = append(lines, ui.FillWidth(width, ui.StyleDefault))
 			continue
 		}
-		v.drawRow(s, content.X, y, content.W, v.rows[rowIdx], rowIdx == sel)
+		lines = append(lines, v.renderRow(width, v.rows[rowIdx], rowIdx == sel))
 	}
+
+	return strings.Join(lines, "\n")
 }
 
-// drawHeader renders the sticky column-label row with dynamic column widths.
-func (v *NodeOverviewView) drawHeader(s *ui.Screen, x, y, w int) {
-	nameW, nsW, statusAt := dynCols(w)
-	readyAt := statusAt + 10
-	restAt := readyAt + 6
-	ageAt := restAt + 5
-
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleHeader)
-	s.DrawText(x+4,        y, ui.StyleHeader, fmt.Sprintf("%-*s", nameW, "NAME"))
-	s.DrawText(x+4+nameW,  y, ui.StyleHeader, fmt.Sprintf("%-*s", nsW, "NAMESPACE"))
-	s.DrawText(x+statusAt, y, ui.StyleHeader, fmt.Sprintf("%-10s", "STATUS"))
-	s.DrawText(x+readyAt,  y, ui.StyleHeader, fmt.Sprintf("%-6s", "READY"))
-	s.DrawText(x+restAt,   y, ui.StyleHeader, fmt.Sprintf("%-5s", "REST"))
-	s.DrawText(x+ageAt,    y, ui.StyleHeader, "AGE")
+func (v *NodeOverviewView) renderHeader(w int) string {
+	nameW, nsW, _ := dynCols(w)
+	hdr := fmt.Sprintf("    %-*s%-*s%-10s%-6s%-5sAGE",
+		nameW, "NAME", nsW, "NAMESPACE", "STATUS", "READY", "REST")
+	return ui.StyleHeader.Render(ui.PadRight(hdr, w))
 }
 
 // RowCount returns the current number of display rows.
 func (v *NodeOverviewView) RowCount() int { return len(v.rows) }
 
 // SelectedPodRef returns the namespace and pod name for the row at idx.
-// Returns ("", "") when idx is out of range or the row is not a pod row.
 func (v *NodeOverviewView) SelectedPodRef(idx int) (ns, pod string) {
 	if idx < 0 || idx >= len(v.rows) {
 		return "", ""
@@ -235,25 +221,40 @@ func (v *NodeOverviewView) SelectedPodRef(idx int) (ns, pod string) {
 	return row.pod.Namespace, row.pod.Name
 }
 
-func (v *NodeOverviewView) drawRow(s *ui.Screen, x, y, w int, row ovRow, selected bool) {
+// SelectedRef returns the kind, namespace, and name for the row at idx.
+func (v *NodeOverviewView) SelectedRef(idx int) (kind, ns, name string) {
+	if idx < 0 || idx >= len(v.rows) {
+		return "", "", ""
+	}
+	row := v.rows[idx]
+	switch row.kind {
+	case rkPod:
+		return "pod", row.pod.Namespace, row.pod.Name
+	case rkNode:
+		return "node", "", row.node.Name
+	}
+	return "", "", ""
+}
+
+func (v *NodeOverviewView) renderRow(w int, row ovRow, selected bool) string {
 	switch row.kind {
 	case rkNode:
-		v.drawNodeRow(s, x, y, w, row.node, row.podCount, selected)
+		return v.renderNodeRow(w, row.node, row.podCount, selected)
 	case rkReason:
-		v.drawReasonRow(s, x, y, w, row.text)
+		return v.renderReasonRow(w, row.text)
 	case rkWarning:
-		v.drawWarningRow(s, x, y, w, row.text)
+		return v.renderWarningRow(w, row.text)
 	default:
-		v.drawPodRow(s, x, y, w, row.pod, selected)
+		return v.renderPodRow(w, row.pod, selected)
 	}
 }
 
-// drawNodeRow renders a node section header aligned to the same column grid as pod rows.
-// When metrics-server data is available, the NAMESPACE column shows cpu/mem/pods;
-// otherwise it shows the k8s version.
-func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, podCount int, selected bool) {
-	nameW, nsW, statusAt := dynCols(w)
-	ageAt := statusAt + 21 // +10 status +6 ready +5 rest
+var styleTaintBadge = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("#D2A032")).
+	Background(lipgloss.Color("#161A2E"))
+
+func (v *NodeOverviewView) renderNodeRow(w int, n model.Node, podCount int, selected bool) string {
+	nameW, nsW, _ := dynCols(w)
 
 	base := ui.StyleNodeHeader
 	dotStyle := ui.StyleNodeReadyDot
@@ -271,75 +272,76 @@ func (v *NodeOverviewView) drawNodeRow(s *ui.Screen, x, y, w int, n model.Node, 
 		metaStyle = ui.StyleSelected
 		statusStyle = ui.StyleSelected
 	}
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', base)
-	s.DrawText(x,          y, dotStyle,    "●")
-	s.DrawText(x+4,        y, nameStyle,   fmt.Sprintf("%-*s", nameW, truncate(n.Name, nameW)))
-	if len(n.Taints) > 0 {
+
+	var b strings.Builder
+	b.WriteString(dotStyle.Render("●"))
+	b.WriteString(base.Render("   "))
+
+	nameText := truncate(n.Name, nameW)
+	if len(n.Taints) > 0 && !selected {
 		badge := fmt.Sprintf("⚑%d", len(n.Taints))
-		badgeStyle := styleTaintBadge
-		if selected {
-			badgeStyle = nameStyle
-		}
 		badgeLen := len([]rune(badge))
-		badgeX := x + 4 + nameW - badgeLen
-		if badgeX > x+4+1 {
-			s.DrawText(badgeX, y, badgeStyle, badge)
+		nameLen := len([]rune(nameText))
+		gap := nameW - nameLen - badgeLen
+		if gap > 1 {
+			b.WriteString(nameStyle.Render(fmt.Sprintf("%-*s", nameLen, nameText)))
+			b.WriteString(base.Render(strings.Repeat(" ", gap)))
+			b.WriteString(styleTaintBadge.Render(badge))
+		} else {
+			b.WriteString(nameStyle.Render(fmt.Sprintf("%-*s", nameW, nameText)))
 		}
+	} else {
+		b.WriteString(nameStyle.Render(fmt.Sprintf("%-*s", nameW, nameText)))
 	}
-	s.DrawText(x+statusAt, y, statusStyle, fmt.Sprintf("%-10s", n.Status))
-	s.DrawText(x+ageAt,    y, metaStyle,   formatDuration(n.Age))
 
 	// NAMESPACE column: metrics when available, version otherwise.
 	if n.MetricsOK && n.AllocCPUm > 0 {
 		cpuPct := int(n.UsedCPUm * 100 / n.AllocCPUm)
 		memPct := int(n.UsedMemMi * 100 / n.AllocMemMi)
-
 		cpuStyle, memStyle := metaStyle, metaStyle
 		if !selected {
 			cpuStyle = metricStyle(cpuPct)
 			memStyle = metricStyle(memPct)
 		}
-
-		col := x + 4 + nameW
 		cpu := fmt.Sprintf("cpu:%d%% ", cpuPct)
 		mem := fmt.Sprintf("mem:%d%% ", memPct)
-		s.DrawText(col, y, cpuStyle, truncate(cpu, nsW/2))
-		col += len([]rune(cpu))
-		if col < x+4+nameW+nsW {
-			s.DrawText(col, y, memStyle, truncate(mem, (x+4+nameW+nsW)-col))
+		pods := ""
+		if n.AllocPods > 0 {
+			pods = fmt.Sprintf("%d/%d pods", podCount, n.AllocPods)
 		}
-		col += len([]rune(mem))
-		if n.AllocPods > 0 && col < x+4+nameW+nsW {
-			pods := fmt.Sprintf("%d/%d pods", podCount, n.AllocPods)
-			s.DrawText(col, y, metaStyle, truncate(pods, (x+4+nameW+nsW)-col))
+		nsContent := cpu + mem + pods
+		if len([]rune(nsContent)) > nsW {
+			nsContent = string([]rune(nsContent)[:nsW])
+		}
+		// Render each part with its own style.
+		b.WriteString(cpuStyle.Render(truncate(cpu, nsW/2)))
+		remaining := nsW - len([]rune(cpu))
+		if remaining > 0 {
+			b.WriteString(memStyle.Render(truncate(mem, remaining)))
+			remaining -= len([]rune(mem))
+		}
+		if remaining > 0 && pods != "" {
+			b.WriteString(metaStyle.Render(truncate(pods, remaining)))
 		}
 	} else {
-		s.DrawText(x+4+nameW, y, metaStyle, fmt.Sprintf("%-*s", nsW, truncate(n.Version, nsW)))
+		b.WriteString(metaStyle.Render(fmt.Sprintf("%-*s", nsW, truncate(n.Version, nsW))))
 	}
+
+	b.WriteString(statusStyle.Render(fmt.Sprintf("%-10s", n.Status)))
+	// Skip READY column for nodes.
+	b.WriteString(base.Render(strings.Repeat(" ", 11)))
+	b.WriteString(metaStyle.Render(formatDuration(n.Age)))
+
+	result := b.String()
+	// Pad to width.
+	runes := []rune(result)
+	if len(runes) < w {
+		result += base.Render(strings.Repeat(" ", w-len(runes)))
+	}
+	return result
 }
 
-var styleTaintBadge = tcell.StyleDefault.
-	Foreground(tcell.NewRGBColor(210, 160, 50)).
-	Background(tcell.NewRGBColor(22, 26, 46))
-
-// SelectedRef returns the kind, namespace, and name for the row at idx.
-// kind is "pod" or "node"; ns is empty for nodes.
-func (v *NodeOverviewView) SelectedRef(idx int) (kind, ns, name string) {
-	if idx < 0 || idx >= len(v.rows) {
-		return "", "", ""
-	}
-	row := v.rows[idx]
-	switch row.kind {
-	case rkPod:
-		return "pod", row.pod.Namespace, row.pod.Name
-	case rkNode:
-		return "node", "", row.node.Name
-	}
-	return "", "", ""
-}
-
-// metricStyle returns a colour-coded style for a percentage value.
-func metricStyle(pct int) tcell.Style {
+func metricStyle(pct int) lipgloss.Style {
 	switch {
 	case pct >= 85:
 		return ui.StyleMetricsCrit
@@ -349,23 +351,22 @@ func metricStyle(pct int) tcell.Style {
 	return ui.StyleMetricsOK
 }
 
-// drawReasonRow renders a pending-pod explainer sub-row.
-func (v *NodeOverviewView) drawReasonRow(s *ui.Screen, x, y, w int, reason string) {
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleDefault)
-	s.DrawText(x+4, y, ui.StylePendingReason, truncate("→ "+reason, w-6))
+func (v *NodeOverviewView) renderReasonRow(w int, reason string) string {
+	text := "    " + truncate("→ "+reason, w-6)
+	return ui.StyleDefault.Render(ui.PadRight(text, w))
 }
 
-// drawWarningRow renders a scheduling imbalance banner.
-func (v *NodeOverviewView) drawWarningRow(s *ui.Screen, x, y, w int, msg string) {
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', ui.StyleWarning)
-	s.DrawText(x+2, y, ui.StyleWarning, truncate(msg, w-4))
+func (v *NodeOverviewView) renderWarningRow(w int, msg string) string {
+	text := "  " + truncate(msg, w-4)
+	return ui.StyleWarning.Render(ui.PadRight(text, w))
 }
 
-func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, selected bool) {
+func (v *NodeOverviewView) renderPodRow(w int, p model.Pod, selected bool) string {
 	nameW, nsW, statusAt := dynCols(w)
 	readyAt := statusAt + 10
 	restAt := readyAt + 6
 	ageAt := restAt + 5
+	_ = ageAt
 
 	statusStyle := podBaseStyle(p.Status)
 	nameStyle := ui.StylePodName
@@ -379,28 +380,37 @@ func (v *NodeOverviewView) drawPodRow(s *ui.Screen, x, y, w int, p model.Pod, se
 	if selected {
 		bg = ui.StyleSelected
 	}
-	s.FillRect(ui.Rect{X: x, Y: y, W: w, H: 1}, ' ', bg)
 
 	iconStyle := podBaseStyle(p.Status)
 	if selected {
 		iconStyle = ui.StyleSelected
 	}
-	s.DrawText(x+1, y, iconStyle, podStatusIcon(p.Status))
 
-	s.DrawText(x+4,        y, nameStyle,   fmt.Sprintf("%-*s", nameW, truncate(p.Name, nameW)))
-	s.DrawText(x+4+nameW,  y, nsStyle,     fmt.Sprintf("%-*s", nsW, truncate(p.Namespace, nsW)))
-	s.DrawText(x+statusAt, y, statusStyle, fmt.Sprintf("%-10s", podStatusShort(p.Status)))
-	s.DrawText(x+readyAt,  y, statusStyle, fmt.Sprintf("%-6s", p.Ready))
+	var b strings.Builder
+	b.WriteString(bg.Render(" "))
+	b.WriteString(iconStyle.Render(podStatusIcon(p.Status)))
+	b.WriteString(bg.Render("  "))
+	b.WriteString(nameStyle.Render(fmt.Sprintf("%-*s", nameW, truncate(p.Name, nameW))))
+	b.WriteString(nsStyle.Render(fmt.Sprintf("%-*s", nsW, truncate(p.Namespace, nsW))))
+	b.WriteString(statusStyle.Render(fmt.Sprintf("%-10s", podStatusShort(p.Status))))
+	b.WriteString(statusStyle.Render(fmt.Sprintf("%-6s", p.Ready)))
 
 	restartStyle := statusStyle
 	if !selected {
 		restartStyle = restartCountStyle(p.Restarts)
 	}
-	s.DrawText(x+restAt, y, restartStyle, fmt.Sprintf("%-5d", p.Restarts))
-	s.DrawText(x+ageAt,  y, statusStyle,  formatDuration(p.Age))
+	b.WriteString(restartStyle.Render(fmt.Sprintf("%-5d", p.Restarts)))
+	b.WriteString(statusStyle.Render(formatDuration(p.Age)))
+
+	result := b.String()
+	runes := []rune(result)
+	if len(runes) < w {
+		result += bg.Render(strings.Repeat(" ", w-len(runes)))
+	}
+	return result
 }
 
-func podBaseStyle(status string) tcell.Style {
+func podBaseStyle(status string) lipgloss.Style {
 	switch status {
 	case "Running":
 		return ui.StylePodRunning
@@ -452,7 +462,7 @@ func podStatusIcon(status string) string {
 	return "·"
 }
 
-func restartCountStyle(restarts int32) tcell.Style {
+func restartCountStyle(restarts int32) lipgloss.Style {
 	switch {
 	case restarts >= 10:
 		return ui.StyleRestartsCrit

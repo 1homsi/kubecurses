@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/1homsi/kubecurses/internal/model"
 )
@@ -23,28 +24,25 @@ func contextHint(state *model.AppState) string {
 	}
 }
 
-// DrawStatusBar renders the status bar at the bottom of the screen.
+// RenderStatusBar renders the status bar and returns it as a string.
 // When search mode is active it renders a search input bar instead.
-func DrawStatusBar(s *Screen, screenW, screenH int, state *model.AppState) {
-	r := StatusBarRect(screenW, screenH)
-
+func RenderStatusBar(screenW int, state *model.AppState) string {
 	if state.SearchMode {
-		s.FillRect(r, ' ', StyleSelected)
 		prompt := fmt.Sprintf(" / %s", state.ActiveSearchQuery())
-		s.DrawTextTrunc(r.X, r.Y, r.W-1, StyleSelected, prompt)
-		cursorX := r.X + len([]rune(prompt))
-		if cursorX < r.X+r.W {
-			s.DrawText(cursorX, r.Y, StyleSelected.Reverse(true), " ")
+		r := []rune(prompt)
+		if len(r) > screenW-1 {
+			r = r[:screenW-1]
 		}
-		return
+		cursor := " "
+		if len(r) < screenW {
+			cursor = StyleSelected.Reverse(true).Render(" ")
+		}
+		return StyleSelected.Render(PadRight(string(r), screenW-1)) + cursor
 	}
-
-	s.FillRect(r, ' ', StyleStatusBar)
 
 	if state.LastErr != nil {
 		msg := fmt.Sprintf(" ERROR: %v", state.LastErr)
-		s.DrawTextTrunc(r.X, r.Y, r.W, StyleError, msg)
-		return
+		return StyleError.Render(PadRight(Truncate(msg, screenW), screenW))
 	}
 
 	nsDisplay := state.Namespace
@@ -55,16 +53,17 @@ func DrawStatusBar(s *Screen, screenW, screenH int, state *model.AppState) {
 		nsDisplay = state.NamespaceFilter
 	}
 
-	filterSuffix := ""
+	var parts []string
+	parts = append(parts, fmt.Sprintf(" ns:%s", nsDisplay))
+
 	if q := state.ActiveSearchQuery(); q != "" {
-		filterSuffix = fmt.Sprintf("  filter:%q", q)
+		parts = append(parts, fmt.Sprintf("filter:%q", q))
 	}
 
-	truncSuffix := ""
 	if state.PodsTruncated {
-		truncSuffix = fmt.Sprintf("  ⚠ pods capped: %d shown of %d", len(state.Pods), state.TotalPods)
+		parts = append(parts, fmt.Sprintf("⚠ pods capped: %d shown of %d", len(state.Pods), state.TotalPods))
 	}
 
-	left := fmt.Sprintf(" ns:%s%s%s%s", nsDisplay, filterSuffix, truncSuffix, contextHint(state))
-	s.DrawTextTrunc(r.X, r.Y, r.W, StyleStatusBar, left)
+	left := strings.Join(parts, "  ") + contextHint(state)
+	return StyleStatusBar.Render(PadRight(Truncate(left, screenW), screenW))
 }

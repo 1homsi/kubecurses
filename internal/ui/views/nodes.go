@@ -3,7 +3,7 @@ package views
 import (
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/1homsi/kubecurses/internal/model"
 	"github.com/1homsi/kubecurses/internal/ui"
@@ -16,10 +16,12 @@ type NodesView struct {
 	scrollOffset int
 }
 
-func (v *NodesView) Draw(s *ui.Screen, r ui.Rect, state *model.AppState) {
+func (v *NodesView) Render(width, height int, state *model.AppState) string {
 	m := &nodesModel{nodes: filterNodes(state)}
 	// NodesView has no dedicated tab index currently; use selection 0.
-	v.scrollOffset = ui.DrawTable(s, r, m, 0, v.scrollOffset)
+	var rendered string
+	rendered, v.scrollOffset = ui.RenderTable(width, height, m, 0, v.scrollOffset)
+	return rendered
 }
 
 func filterNodes(state *model.AppState) []model.Node {
@@ -58,7 +60,7 @@ func (m *nodesModel) Rows() [][]string {
 	return rows
 }
 
-func (m *nodesModel) StyleForRow(row int) tcell.Style {
+func (m *nodesModel) StyleForRow(row int) lipgloss.Style {
 	if row >= len(m.nodes) {
 		return ui.StyleDefault
 	}

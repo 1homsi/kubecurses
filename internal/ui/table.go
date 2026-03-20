@@ -1,6 +1,11 @@
 package ui
 
-import "github.com/gdamore/tcell/v2"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // TableModel is implemented by each resource view to supply table data.
 type TableModel interface {
@@ -8,25 +13,25 @@ type TableModel interface {
 	Headers() []string
 	// Rows returns all data rows. Each inner slice must match len(Headers()).
 	Rows() [][]string
-	// StyleForRow returns the tcell style to use for the given data row.
+	// StyleForRow returns the lipgloss style to use for the given data row.
 	// row is the 0-based index into Rows().
-	StyleForRow(row int) tcell.Style
+	StyleForRow(row int) lipgloss.Style
 }
 
-// DrawTable renders a scrollable table inside rect r.
+// RenderTable renders a scrollable table and returns it as a string.
 // selected is the 0-based index of the highlighted row.
 // scrollOffset is the first visible data row (for vertical scrolling).
-// Returns the new scrollOffset adjusted so the selected row is visible.
-func DrawTable(s *Screen, r Rect, model TableModel, selected, scrollOffset int) int {
-	if r.H <= 0 || r.W <= 0 {
-		return scrollOffset
+// Returns (rendered string, new scrollOffset).
+func RenderTable(width, height int, model TableModel, selected, scrollOffset int) (string, int) {
+	if height <= 0 || width <= 0 {
+		return "", scrollOffset
 	}
 
 	headers := model.Headers()
 	rows := model.Rows()
 
 	// Reserve first row for headers.
-	visibleRows := r.H - 1
+	visibleRows := height - 1
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
@@ -42,30 +47,28 @@ func DrawTable(s *Screen, r Rect, model TableModel, selected, scrollOffset int) 
 		scrollOffset = 0
 	}
 
-	// Calculate column widths (equal distribution for simplicity).
+	// Calculate column widths (equal distribution).
 	colCount := len(headers)
 	if colCount == 0 {
-		return scrollOffset
+		return "", scrollOffset
 	}
-	colW := r.W / colCount
+	colW := width / colCount
 
-	// Draw header row.
-	s.FillRect(Rect{X: r.X, Y: r.Y, W: r.W, H: 1}, ' ', StyleHeader)
-	for col, h := range headers {
-		s.DrawTextTrunc(r.X+col*colW, r.Y, colW, StyleHeader, h)
+	var lines []string
+
+	// Header row.
+	var hdrParts []string
+	for _, h := range headers {
+		hdrParts = append(hdrParts, fmt.Sprintf("%-*s", colW, Truncate(h, colW)))
 	}
+	hdrText := strings.Join(hdrParts, "")
+	lines = append(lines, StyleHeader.Render(PadRight(hdrText, width)))
 
-	// Draw data rows.
+	// Data rows.
 	for i := 0; i < visibleRows; i++ {
 		rowIdx := scrollOffset + i
-		screenY := r.Y + 1 + i
-		if screenY >= r.Y+r.H {
-			break
-		}
-
 		if rowIdx >= len(rows) {
-			// Clear trailing empty rows.
-			s.FillRect(Rect{X: r.X, Y: screenY, W: r.W, H: 1}, ' ', StyleDefault)
+			lines = append(lines, FillWidth(width, StyleDefault))
 			continue
 		}
 
@@ -73,14 +76,17 @@ func DrawTable(s *Screen, r Rect, model TableModel, selected, scrollOffset int) 
 		if rowIdx == selected {
 			style = StyleSelected
 		}
-		s.FillRect(Rect{X: r.X, Y: screenY, W: r.W, H: 1}, ' ', style)
+
+		var parts []string
 		for col, cell := range rows[rowIdx] {
 			if col >= colCount {
 				break
 			}
-			s.DrawTextTrunc(r.X+col*colW, screenY, colW, style, cell)
+			parts = append(parts, fmt.Sprintf("%-*s", colW, Truncate(cell, colW)))
 		}
+		rowText := strings.Join(parts, "")
+		lines = append(lines, style.Render(PadRight(rowText, width)))
 	}
 
-	return scrollOffset
+	return strings.Join(lines, "\n"), scrollOffset
 }
