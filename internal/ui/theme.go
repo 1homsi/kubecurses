@@ -139,9 +139,13 @@ func ApplyLightTheme() {
 	StyleHeatmapFailed = lipgloss.NewStyle().Foreground(colorRed).Background(colorNodeBg).Bold(true)
 	StyleHeatmapTerm = lipgloss.NewStyle().Foreground(colorDim).Background(colorNodeBg)
 	StyleHeatmapDefault = lipgloss.NewStyle().Foreground(colorBlue).Background(colorNodeBg)
+	StyleHeatmapBorder = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#6B7CB8")).
+		Background(colorNodeBg)
 	StyleHeatmapNodeSel = lipgloss.NewStyle().
-		Background(lipgloss.Color("#A06E00")).
-		Foreground(colorBg)
+		Foreground(lipgloss.Color("#9A6100")).
+		Background(colorNodeBg).
+		Bold(true)
 
 	// ── logs overlay private styles (logsview.go) ────────────────────────
 	logsBg := lipgloss.Color("#D7DCF0")

@@ -17,6 +17,9 @@ const hexCellW = 2
 // heatmapBoxGap is the horizontal gap in columns between adjacent tiles.
 const heatmapBoxGap = 2
 
+// Reserve one full body row for node metrics / summary before the pod grid.
+const heatmapHeaderBodyRows = 1
+
 var (
 	hexChar      = "⬢"
 	hexCharASCII = "#"
@@ -162,8 +165,8 @@ func (v *HeatmapView) Render(width, height int, state *model.AppState) string {
 	state.HeatmapRowPlan = plan
 	nBoxRows := len(plan)
 
-	// hexOverhead = top + bottom shoulder rows; title sits on last top-shoulder.
-	hexOverhead := 2 * ui.HexShoulderRows
+	// hexOverhead = top shoulders + one header body row + bottom shoulders.
+	hexOverhead := 2*ui.HexShoulderRows + heatmapHeaderBodyRows
 	globalBoxH := hexOverhead
 	for _, node := range state.Nodes {
 		nPods := len(nodePods[node.Name])
@@ -305,16 +308,42 @@ func (v *HeatmapView) Render(width, height int, state *model.AppState) string {
 				continue
 			}
 			span := right - left + 1
-			if ry < ui.HexShoulderRows || (h-1-ry) < ui.HexShoulderRows {
-				// Shoulder row — entirely perimeter colour.
-				fillRect(left, y+ry, span, 1, perimStyle)
-			} else {
-				// Body row — one-cell perimeter on each side, fill in between.
+			rowY := y + ry
+
+			fillRect(left, rowY, span, 1, fillStyle)
+
+			switch {
+			case ry == 0:
+				setText(left, rowY, perimStyle, "╱")
 				if span > 2 {
-					fillRect(left+1, y+ry, span-2, 1, fillStyle)
+					setText(left+1, rowY, perimStyle, strings.Repeat("─", span-2))
 				}
-				fillRect(left, y+ry, 1, 1, perimStyle)
-				fillRect(right, y+ry, 1, 1, perimStyle)
+				if span > 1 {
+					setText(right, rowY, perimStyle, "╲")
+				}
+			case ry == h-1:
+				setText(left, rowY, perimStyle, "╲")
+				if span > 2 {
+					setText(left+1, rowY, perimStyle, strings.Repeat("─", span-2))
+				}
+				if span > 1 {
+					setText(right, rowY, perimStyle, "╱")
+				}
+			case ry < ui.HexShoulderRows:
+				setText(left, rowY, perimStyle, "╱")
+				if span > 1 {
+					setText(right, rowY, perimStyle, "╲")
+				}
+			case (h - 1 - ry) < ui.HexShoulderRows:
+				setText(left, rowY, perimStyle, "╲")
+				if span > 1 {
+					setText(right, rowY, perimStyle, "╱")
+				}
+			default:
+				setText(left, rowY, perimStyle, "│")
+				if span > 1 {
+					setText(right, rowY, perimStyle, "│")
+				}
 			}
 		}
 	}
@@ -346,7 +375,7 @@ func (v *HeatmapView) Render(width, height int, state *model.AppState) string {
 			isSelected := nodeIdx == sel
 			nH := globalBoxH
 
-			perimStyle := ui.StyleNodeHeader
+			perimStyle := ui.StyleHeatmapBorder
 			if isSelected {
 				perimStyle = ui.StyleHeatmapNodeSel
 			}
@@ -356,6 +385,7 @@ func (v *HeatmapView) Render(width, height int, state *model.AppState) string {
 			// At this row HexShoulderIndent returns 1, so the hex spans
 			// x+1..x+boxW-2; text safely starts at x+2.
 			titleY := y + ui.HexShoulderRows - 1
+			metaY := y + ui.HexShoulderRows
 			dotStyle := ui.StyleNodeReadyDot
 			if node.Status != "Ready" {
 				dotStyle = ui.StyleNodeNotReadyDot
@@ -366,6 +396,9 @@ func (v *HeatmapView) Render(width, height int, state *model.AppState) string {
 			nameMaxW := boxW - 7
 			setTextTrunc(x+5, titleY, nameMaxW, ui.StyleNodeName,
 				fmt.Sprintf("%-*s", nameMaxW, truncate(node.Name, nameMaxW)))
+
+			running, pending, failing := heatmapPodCounts(pods)
+			metaText := fmt.Sprintf("%d pods", len(pods))
 			if node.MetricsOK {
 				cpuPct, memPct := int64(0), int64(0)
 				if node.AllocCPUm > 0 {
@@ -374,12 +407,28 @@ func (v *HeatmapView) Render(width, height int, state *model.AppState) string {
 				if node.AllocMemMi > 0 {
 					memPct = node.UsedMemMi * 100 / node.AllocMemMi
 				}
-				setTextTrunc(x+5, titleY, boxW-7, ui.StyleNodeMeta,
-					fmt.Sprintf("CPU %3d%% MEM %3d%%", cpuPct, memPct))
+				metaText = fmt.Sprintf("%d pods  C%02d M%02d", len(pods), cpuPct, memPct)
+			}
+			setTextTrunc(x+2, metaY, boxW-4, ui.StyleNodeMeta,
+				fmt.Sprintf("%-*s", boxW-4, truncate(metaText, boxW-4)))
+
+			statusX := x + 2
+			if failing > 0 {
+				statusLabel := fmt.Sprintf("%d bad", failing)
+				statusX = x + boxW - 2 - len([]rune(statusLabel))
+				setText(statusX, metaY, ui.StyleHeatmapFailed, statusLabel)
+			} else if pending > 0 {
+				statusLabel := fmt.Sprintf("%d pend", pending)
+				statusX = x + boxW - 2 - len([]rune(statusLabel))
+				setText(statusX, metaY, ui.StyleHeatmapPending, statusLabel)
+			} else if running > 0 {
+				statusLabel := fmt.Sprintf("%d run", running)
+				statusX = x + boxW - 2 - len([]rune(statusLabel))
+				setText(statusX, metaY, ui.StyleHeatmapRunning, statusLabel)
 			}
 
-			// Pod grid starts at the first body row.
-			innerY := y + ui.HexShoulderRows
+			// Pod grid starts after the dedicated header body row.
+			innerY := y + ui.HexShoulderRows + heatmapHeaderBodyRows
 			podPlan := v.cachedPodPlan(len(pods), maxPodPerRow(gridW), useHexPodLayout)
 			pIdx := 0
 			for hexRow, rowCells := range podPlan {
@@ -527,4 +576,19 @@ func heatmapPodStyle(status string) lipgloss.Style {
 		return ui.StyleHeatmapFailed
 	}
 	return ui.StyleHeatmapDefault
+}
+
+func heatmapPodCounts(pods []model.Pod) (running, pending, failing int) {
+	for _, pod := range pods {
+		switch pod.Status {
+		case "Running":
+			running++
+		case "Pending":
+			pending++
+		case "Failed", "CrashLoopBackOff", "OOMKilled", "ImagePullBackOff",
+			"ErrImagePull", "CreateContainerConfigError", "InvalidImageName":
+			failing++
+		}
+	}
+	return running, pending, failing
 }

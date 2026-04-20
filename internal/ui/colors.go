@@ -189,8 +189,13 @@ var (
 				Foreground(colorBlue).
 				Background(colorNodeBg)
 
+	StyleHeatmapBorder = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6F89C8")).
+				Background(colorNodeBg)
+
 	// Selected node box — amber background on perimeter cells so the ring glows.
 	StyleHeatmapNodeSel = lipgloss.NewStyle().
-				Background(lipgloss.Color("#C89600")).
-				Foreground(colorBg)
+				Foreground(lipgloss.Color("#F0BE42")).
+				Background(colorNodeBg).
+				Bold(true)
 )
